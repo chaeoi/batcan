@@ -128,10 +128,15 @@ void installService(const std::vector<std::string> &arguments,
   if (!robot_model.empty()) {
     profileForModel(robot_model);
     if (std::filesystem::exists(kInstalledConfig) && !force_config) {
-      throw std::runtime_error(
-          "installed config exists; use --force-config to replace it");
+      const auto existing = loadConfig(kInstalledConfig);
+      if (existing.robot_model != robot_model) {
+        throw std::runtime_error(
+            "installed config selects " + existing.robot_model +
+            "; use --force-config to replace it");
+      }
+    } else {
+      writeFileAtomic(kInstalledConfig, defaultConfig(robot_model), 0644);
     }
-    writeFileAtomic(kInstalledConfig, defaultConfig(robot_model), 0644);
   } else if (!std::filesystem::exists(kInstalledConfig)) {
     writeFileAtomic(kInstalledConfig, defaultConfig(), 0644);
   }
