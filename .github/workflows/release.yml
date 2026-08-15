@@ -1,0 +1,77 @@
+name: Build and release batcan
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: batcan-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    container: ros:humble-ros-base-jammy
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential cmake ros-humble-ament-cmake
+      - name: Build and test
+        run: |
+          . /opt/ros/humble/setup.sh
+          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+          ctest --test-dir build --output-on-failure
+          mkdir -p dist
+          cp build/batcan dist/batcan-linux-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: batcan-${{ matrix.arch }}
+          path: dist/batcan-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: batcan-*
+          merge-multiple: true
+          path: dist
+      - name: Compute release version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          sha256sum dist/batcan-linux-* > dist/SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release delete "$VERSION" --yes
+          fi
+          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS --target "$GITHUB_SHA" --title "batcan $VERSION" --notes "Prebuilt Linux AMD64 and ARM64 binaries."
