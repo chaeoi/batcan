@@ -9,8 +9,6 @@
 ├── config.example.yml      # 运行配置示例，只选择型号
 ├── cmake/
 │   └── embedded_models.hpp.in # 二进制资源嵌入模板
-├── deploy/
-│   └── install.sh          # Release 安装脚本
 ├── doc/
 │   ├── KVMS-内网通信CAN协议-客户版.xlsx
 │   └── HTBMS-CAN协议-V1.1.0-20260630.docx
@@ -63,21 +61,15 @@
 
 ### 安装 Release
 
-安装最新 Release：
+从 [Release 页面](https://github.com/chaeoi/batcan/releases) 下载与目标架构相符的二进制：`batcan-linux-amd64` 或 `batcan-linux-arm64`，并下载同版本的 `SHA256SUMS`。校验后直接调用二进制内置的服务安装命令：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/chaeoi/batcan/main/deploy/install.sh \
-  | sudo sh
+sha256sum -c --ignore-missing SHA256SUMS
+chmod 0755 batcan-linux-arm64
+sudo ./batcan-linux-arm64 service install
 ```
 
-指定版本时：
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/chaeoi/batcan/main/deploy/install.sh \
-  | sudo sh -s -- --version v0.1.0
-```
-
-安装脚本会下载包含全部型号配置的单一 Release 二进制、校验 SHA-256、安装可执行文件并注册 systemd 服务。首次安装会生成一份所有支持型号均被注释的配置文件，选择型号后再启动服务。
+二进制会安装自身、注册 systemd 服务并处理配置文件。首次安装会生成一份所有支持型号均被注释的配置文件，选择型号后再启动服务。
 
 默认路径如下：
 
