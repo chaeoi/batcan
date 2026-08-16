@@ -41,6 +41,12 @@ double decodeField(const FieldConfig &field,
   return numeric * field.scale + field.bias;
 }
 
+std::uint8_t mapValue(const FieldConfig &field, double value) {
+  const auto raw = static_cast<std::uint8_t>(value);
+  const auto mapped = field.value_map.find(raw);
+  return mapped == field.value_map.end() ? raw : mapped->second;
+}
+
 void applyResponse(const ResponseConfig &response,
                    const std::array<std::uint8_t, 8> &data,
                    std::size_t data_length, BatterySample &sample) {
@@ -62,11 +68,11 @@ void applyResponse(const ResponseConfig &response,
     } else if (field.metric == "design_capacity") {
       sample.design_capacity = value;
     } else if (field.metric == "power_supply_status") {
-      sample.power_supply_status = static_cast<std::uint8_t>(value);
+      sample.power_supply_status = mapValue(field, value);
     } else if (field.metric == "power_supply_health") {
-      sample.power_supply_health = static_cast<std::uint8_t>(value);
+      sample.power_supply_health = mapValue(field, value);
     } else if (field.metric == "power_supply_technology") {
-      sample.power_supply_technology = static_cast<std::uint8_t>(value);
+      sample.power_supply_technology = mapValue(field, value);
     }
   }
 }

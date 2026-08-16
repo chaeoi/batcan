@@ -24,8 +24,11 @@ std::uint32_t wireId(std::uint32_t id, bool extended) {
   return id | (extended ? CAN_EFF_FLAG : 0U);
 }
 
-std::uint32_t idMask(bool extended) {
-  return (extended ? CAN_EFF_MASK : CAN_SFF_MASK) | CAN_EFF_FLAG;
+std::uint32_t idMask(const ResponseConfig &response) {
+  const auto mask = response.id_mask == 0
+                        ? (response.extended ? CAN_EFF_MASK : CAN_SFF_MASK)
+                        : response.id_mask;
+  return mask | (response.extended ? CAN_EFF_FLAG : 0U);
 }
 
 double valueOrNaN(const std::optional<double> &value) {
@@ -72,7 +75,7 @@ bool BatteryBridge::openCanSocket() {
     for (const auto &response : query.responses) {
       filters.push_back(
           can_filter{wireId(response.id, response.extended),
-                     idMask(response.extended)});
+                     idMask(response)});
     }
   }
   if (::setsockopt(can_fd_, SOL_CAN_RAW, CAN_RAW_FILTER, filters.data(),
@@ -121,25 +124,27 @@ void BatteryBridge::collectAndPublish() {
 
 void BatteryBridge::collectQuery(const QueryConfig &query,
                                  BatterySample &sample) {
-  can_frame stale{};
-  while (::recv(can_fd_, &stale, sizeof(stale), MSG_DONTWAIT) > 0) {
+  if (query.send_request) {
+    can_frame stale{};
+    while (::recv(can_fd_, &stale, sizeof(stale), MSG_DONTWAIT) > 0) {
+    }
+
+    can_frame request{};
+    request.can_id = wireId(query.request_id, query.extended);
+    request.can_dlc = static_cast<__u8>(query.request_data.size());
+    std::copy(query.request_data.begin(), query.request_data.end(), request.data);
+    if (::write(can_fd_, &request, sizeof(request)) != sizeof(request)) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                           "send CAN query %s failed: %s", query.name.c_str(),
+                           std::strerror(errno));
+      closeCanSocket();
+      return;
+    }
   }
 
-  can_frame request{};
-  request.can_id = wireId(query.request_id, query.extended);
-  request.can_dlc = static_cast<__u8>(query.request_data.size());
-  std::copy(query.request_data.begin(), query.request_data.end(), request.data);
-  if (::write(can_fd_, &request, sizeof(request)) != sizeof(request)) {
-    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                         "send CAN query %s failed: %s", query.name.c_str(),
-                         std::strerror(errno));
-    closeCanSocket();
-    return;
-  }
-
-  std::set<std::uint32_t> pending;
-  for (const auto &response : query.responses) {
-    pending.insert(wireId(response.id, response.extended));
+  std::set<std::size_t> pending;
+  for (std::size_t index = 0; index < query.responses.size(); ++index) {
+    pending.insert(index);
   }
   const auto deadline = std::chrono::steady_clock::now() +
                         std::chrono::milliseconds(
@@ -169,9 +174,14 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
     if (::read(can_fd_, &frame, sizeof(frame)) != sizeof(frame)) {
       continue;
     }
-    for (const auto &response : query.responses) {
+    for (std::size_t index = 0; index < query.responses.size(); ++index) {
+      if (pending.find(index) == pending.end()) {
+        continue;
+      }
+      const auto &response = query.responses[index];
       const auto expected = wireId(response.id, response.extended);
-      if ((frame.can_id & idMask(response.extended)) != expected) {
+      if ((frame.can_id & idMask(response)) !=
+          (expected & idMask(response))) {
         continue;
       }
       std::array<std::uint8_t, 8> data{};
@@ -180,7 +190,7 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
       try {
         applyResponse(response, data, std::min<std::size_t>(frame.can_dlc, 8),
                       sample);
-        pending.erase(expected);
+        pending.erase(index);
       } catch (const std::exception &error) {
         RCLCPP_WARN(get_logger(), "decode response 0x%X failed: %s",
                     response.id, error.what());

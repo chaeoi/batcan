@@ -1,3 +1,2 @@
-# This is the complete editable configuration. Select a model supported by the
-# installed binary; the model's CAN protocol lives in the signed release.
-robot_model: 2m_v0.1.2
+# Uncomment exactly one model line.
+# model: 2m_v0.1.2

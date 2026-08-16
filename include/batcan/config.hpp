@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -15,16 +16,20 @@ struct FieldConfig {
   std::string endian = "big";
   double scale = 1.0;
   double bias = 0.0;
+  std::map<std::uint8_t, std::uint8_t> value_map;
 };
 
 struct ResponseConfig {
   std::uint32_t id = 0;
   bool extended = true;
   std::vector<FieldConfig> fields;
+  // Zero means an exact ID match; otherwise only the masked ID bits match.
+  std::uint32_t id_mask = 0;
 };
 
 struct QueryConfig {
   std::string name;
+  bool send_request = true;
   std::uint32_t request_id = 0;
   bool extended = true;
   std::vector<std::uint8_t> request_data;
@@ -47,13 +52,13 @@ struct RosConfig {
 };
 
 struct Config {
-  std::string robot_model;
+  std::string model;
+  std::string bms_model;
   CanConfig can;
   RosConfig ros;
 };
 
 Config loadConfig(const std::string &path);
-Config profileForModel(const std::string &robot_model);
-std::string defaultConfig(const std::string &robot_model = "");
+std::string defaultConfig();
 
 }  // namespace batcan

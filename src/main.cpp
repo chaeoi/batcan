@@ -34,8 +34,8 @@ void usage(std::ostream &stream) {
   stream << "Usage:\n"
          << "  batcan run [--config PATH]\n"
          << "  batcan --check-config [--config PATH]\n"
-         << "  batcan service install [--robot-model MODEL] [--force-config]\n"
-         << "  batcan service uninstall [--purge]\n"
+         << "  batcan service install [--force-config]\n"
+         << "  batcan service uninstall\n"
          << "  batcan service status\n"
          << "  batcan --version\n";
 }
@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
     }
 
     bool check_config = false;
-    std::string config_path = "/etc/batcan/config.yml";
+    std::string config_path = "/opt/batcan/config.yml";
     std::size_t index = 0;
     if (!arguments.empty() && arguments.front() == "run") {
       index = 1;

@@ -14,11 +14,38 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 
+file(GLOB BATCAN_MODEL_FILES CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/models/*.yml")
+if(NOT BATCAN_MODEL_FILES)
+  message(FATAL_ERROR "No model configuration files found in models/")
+endif()
+
+set(BATCAN_EMBEDDED_MODEL_ENTRIES "")
+foreach(BATCAN_MODEL_FILE IN LISTS BATCAN_MODEL_FILES)
+  get_filename_component(BATCAN_MODEL_NAME "${BATCAN_MODEL_FILE}" NAME_WE)
+  if(NOT BATCAN_MODEL_NAME MATCHES "^[A-Za-z0-9._-]{1,64}$")
+    message(FATAL_ERROR "Invalid model configuration filename: ${BATCAN_MODEL_FILE}")
+  endif()
+  file(READ "${BATCAN_MODEL_FILE}" BATCAN_MODEL_CONTENT)
+  string(SHA256 BATCAN_MODEL_HASH "${BATCAN_MODEL_CONTENT}")
+  string(SUBSTRING "${BATCAN_MODEL_HASH}" 0 8 BATCAN_MODEL_DELIMITER)
+  string(APPEND BATCAN_EMBEDDED_MODEL_ENTRIES
+    "  {\"${BATCAN_MODEL_NAME}\", R\"BATCAN_${BATCAN_MODEL_DELIMITER}(\n${BATCAN_MODEL_CONTENT})BATCAN_${BATCAN_MODEL_DELIMITER}\"},\n")
+endforeach()
+list(LENGTH BATCAN_MODEL_FILES BATCAN_EMBEDDED_MODEL_COUNT)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan")
+configure_file(
+  cmake/embedded_models.hpp.in
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan/embedded_models.hpp"
+  @ONLY)
+
 add_library(batcan_core STATIC
   src/config.cpp
+  src/models.cpp
   src/protocol.cpp
 )
-target_include_directories(batcan_core PUBLIC include)
+target_include_directories(batcan_core PUBLIC include PRIVATE
+  "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_options(batcan_core PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 add_executable(batcan

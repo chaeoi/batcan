@@ -18,11 +18,13 @@
 namespace batcan {
 namespace {
 
-constexpr const char *kInstalledBinary = "/usr/local/bin/batcan";
-constexpr const char *kConfigDirectory = "/etc/batcan";
-constexpr const char *kInstalledConfig = "/etc/batcan/config.yml";
+constexpr const char *kInstallDirectory = "/opt/batcan";
+constexpr const char *kInstalledBinary = "/opt/batcan/batcan";
+constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
+constexpr const char *kLogDirectory = "/var/log/batcan";
+constexpr const char *kPrivateLogDirectory = "/var/log/private/batcan";
 constexpr const char *kServiceUser = "ubuntu";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
 
@@ -92,7 +94,7 @@ std::string serviceUnit() {
          "User=" + std::string(kServiceUser) +
          "\nGroup=" + kServiceUser +
          "\nExecStart=/bin/bash -lc 'source " + kROSSetup +
-         " && exec /usr/local/bin/batcan run --config " + kInstalledConfig +
+         " && exec /opt/batcan/batcan run --config " + kInstalledConfig +
          "'\nRestart=always\nRestartSec=3\n"
          "Environment=ROS_LOCALHOST_ONLY=1\n"
          "Environment=ROS_LOG_DIR=/var/log/batcan/ros\n"
@@ -101,7 +103,7 @@ std::string serviceUnit() {
          "CapabilityBoundingSet=CAP_NET_RAW\n"
          "NoNewPrivileges=true\n"
          "ProtectSystem=strict\nProtectHome=read-only\n"
-         "ReadOnlyPaths=/etc/batcan/config.yml\n"
+         "ReadOnlyPaths=/opt/batcan/config.yml\n"
          "PrivateTmp=true\nProtectKernelTunables=true\n"
          "ProtectControlGroups=true\nRestrictSUIDSGID=true\n"
          "RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_CAN AF_INET AF_INET6\n\n"
@@ -111,33 +113,25 @@ std::string serviceUnit() {
 void installService(const std::vector<std::string> &arguments,
                     const std::string &executable_path) {
   requireRoot();
-  std::string robot_model;
   bool force_config = false;
-  for (std::size_t index = 0; index < arguments.size(); ++index) {
-    if (arguments[index] == "--robot-model" && index + 1 < arguments.size()) {
-      robot_model = arguments[++index];
-    } else if (arguments[index] == "--force-config") {
+  for (const auto &argument : arguments) {
+    if (argument == "--force-config") {
       force_config = true;
     } else {
-      throw std::runtime_error("unknown service install option: " +
-                               arguments[index]);
+      throw std::runtime_error("unknown service install option: " + argument);
     }
   }
 
-  std::filesystem::create_directories(kConfigDirectory);
-  if (!robot_model.empty()) {
-    profileForModel(robot_model);
-    if (std::filesystem::exists(kInstalledConfig) && !force_config) {
-      const auto existing = loadConfig(kInstalledConfig);
-      if (existing.robot_model != robot_model) {
-        throw std::runtime_error(
-            "installed config selects " + existing.robot_model +
-            "; use --force-config to replace it");
-      }
-    } else {
-      writeFileAtomic(kInstalledConfig, defaultConfig(robot_model), 0644);
+  std::filesystem::create_directories(kInstallDirectory);
+  bool valid_config = false;
+  if (!force_config && std::filesystem::exists(kInstalledConfig)) {
+    try {
+      (void)loadConfig(kInstalledConfig);
+      valid_config = true;
+    } catch (const std::exception &) {
+      writeFileAtomic(kInstalledConfig, defaultConfig(), 0644);
     }
-  } else if (!std::filesystem::exists(kInstalledConfig)) {
+  } else {
     writeFileAtomic(kInstalledConfig, defaultConfig(), 0644);
   }
 
@@ -153,15 +147,14 @@ void installService(const std::vector<std::string> &arguments,
   }
   writeFileAtomic(kUnitPath, serviceUnit(), 0644);
   runCommand({"systemctl", "daemon-reload"});
-  runCommand({"systemctl", "enable", "batcan.service"});
-  try {
-    loadConfig(kInstalledConfig);
-  } catch (const std::exception &) {
-    std::cout << "installed batcan.service; set robot_model in "
-              << kInstalledConfig
-              << " and start it with: systemctl start batcan\n";
+  if (!valid_config) {
+    runCommand({"systemctl", "disable", "--now", "batcan.service"}, true);
+    std::cout << "installed batcan.service; select one model in "
+              << kInstalledConfig << " and start it with: systemctl enable "
+              << "--now batcan\n";
     return;
   }
+  runCommand({"systemctl", "enable", "batcan.service"});
   runCommand({"systemctl", "restart", "batcan.service"});
   std::cout << "installed and started batcan.service with config "
             << kInstalledConfig << '\n';
@@ -169,27 +162,17 @@ void installService(const std::vector<std::string> &arguments,
 
 void uninstallService(const std::vector<std::string> &arguments) {
   requireRoot();
-  bool purge = false;
-  for (const auto &argument : arguments) {
-    if (argument == "--purge") {
-      purge = true;
-    } else {
-      throw std::runtime_error("unknown service uninstall option: " +
-                               argument);
-    }
+  if (!arguments.empty()) {
+    throw std::runtime_error("service uninstall takes no options");
   }
   runCommand({"systemctl", "disable", "--now", "batcan.service"},
              true);
   std::filesystem::remove(kUnitPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
-  if (purge) {
-    std::filesystem::remove(kInstalledConfig);
-    std::filesystem::remove(kConfigDirectory);
-    std::filesystem::remove(kInstalledBinary);
-  }
-  std::cout << "uninstalled batcan.service"
-            << (purge ? " and purged its files" : " (config preserved)")
+  std::filesystem::remove_all(kLogDirectory);
+  std::filesystem::remove_all(kPrivateLogDirectory);
+  std::cout << "uninstalled batcan.service; preserved " << kInstallDirectory
             << '\n';
 }
 
