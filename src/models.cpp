@@ -511,11 +511,18 @@ Config parseModel(const embedded::Model &resource) {
   const auto &can_map = asMap(requiredNode(root_map, "can", model, "root"),
                               model, "can");
   validateKeys(can_map,
-               {"interface", "query_interval_ms", "response_timeout_ms"},
+               {"interface", "bitrate", "query_interval_ms",
+                "response_timeout_ms"},
                model, "can");
   config.can.interface = requiredScalar(can_map, "interface", model, "can");
   if (!std::regex_match(config.can.interface, kName)) {
     invalid(model, "can.interface is invalid");
+  }
+  config.can.bitrate = static_cast<int>(parseUnsigned(
+      requiredScalar(can_map, "bitrate", model, "can"), 10000000U, model,
+      "can.bitrate"));
+  if (config.can.bitrate <= 0) {
+    invalid(model, "can.bitrate must be positive");
   }
   config.can.query_interval_ms = static_cast<int>(parseUnsigned(
       requiredScalar(can_map, "query_interval_ms", model, "can"), 60000U,

@@ -38,6 +38,7 @@ struct QueryConfig {
 
 struct CanConfig {
   std::string interface = "can5";
+  int bitrate = 250000;
   int query_interval_ms = 2000;
   int response_timeout_ms = 800;
   std::vector<QueryConfig> queries;

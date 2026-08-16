@@ -7,7 +7,7 @@
 | 节点 | 字段 | 说明 |
 | --- | --- | --- |
 | `model` | `id`、`bms_model` | 机器人型号和 BMS 型号 |
-| `can` | `interface`、`query_interval_ms`、`response_timeout_ms` | CAN 接口和采集时序 |
+| `can` | `interface`、`bitrate`、`query_interval_ms`、`response_timeout_ms` | CAN 接口、速率和采集时序 |
 | `ros` | `topic`、`frame_id`、`localhost_only`、`domain_id`、`qos_depth` | ROS 2 发布参数 |
 | `queries[]` | `name`、`send_request`、`request`、`responses` | 一组主动查询或被动广播 |
 | `request` | `id`、`extended`、`data` | 主动查询帧；被动广播可省略 |

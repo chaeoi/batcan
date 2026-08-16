@@ -4,6 +4,7 @@ model:
 
 can:
   interface: can5
+  bitrate: 250000
   query_interval_ms: 2000
   response_timeout_ms: 800
 

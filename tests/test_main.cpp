@@ -40,6 +40,7 @@ void testDefaultConfig() {
   const auto config = batcan::loadConfig(path.string());
   std::filesystem::remove(path);
   require(config.can.interface == "can5", "default CAN interface mismatch");
+  require(config.can.bitrate == 250000, "default CAN bitrate mismatch");
   require(config.can.queries.size() == 1, "default query count mismatch");
   require(config.can.queries[0].responses.size() == 3,
           "default response count mismatch");

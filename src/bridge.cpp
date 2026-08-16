@@ -6,14 +6,17 @@
 #include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cerrno>
 #include <cstring>
 #include <limits>
 #include <set>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -35,6 +38,37 @@ double valueOrNaN(const std::optional<double> &value) {
   return value.value_or(std::numeric_limits<double>::quiet_NaN());
 }
 
+int runCommand(const std::vector<std::string> &arguments) {
+  const auto child = ::fork();
+  if (child < 0) {
+    return -1;
+  }
+  if (child == 0) {
+    std::vector<char *> values;
+    values.reserve(arguments.size() + 1);
+    for (const auto &argument : arguments) {
+      values.push_back(const_cast<char *>(argument.c_str()));
+    }
+    values.push_back(nullptr);
+    ::execvp(values[0], values.data());
+    _exit(127);
+  }
+  int status = 0;
+  if (::waitpid(child, &status, 0) < 0) {
+    return -1;
+  }
+  return WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+}
+
+bool configureCanInterface(const CanConfig &can) {
+  (void)runCommand({"ip", "link", "set", can.interface, "down"});
+  if (runCommand({"ip", "link", "set", can.interface, "type", "can",
+                  "bitrate", std::to_string(can.bitrate)}) != 0) {
+    return false;
+  }
+  return runCommand({"ip", "link", "set", can.interface, "up"}) == 0;
+}
+
 }  // namespace
 
 BatteryBridge::BatteryBridge(Config config)
@@ -53,6 +87,13 @@ bool BatteryBridge::openCanSocket() {
   if (can_fd_ >= 0) {
     return true;
   }
+  if (!configureCanInterface(config_.can)) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                         "configure CAN interface %s at %d bit/s failed",
+                         config_.can.interface.c_str(), config_.can.bitrate);
+    return false;
+  }
+
   can_fd_ = ::socket(PF_CAN, SOCK_RAW | SOCK_CLOEXEC, CAN_RAW);
   if (can_fd_ < 0) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
@@ -110,25 +151,20 @@ void BatteryBridge::closeCanSocket() {
 }
 
 void BatteryBridge::collectAndPublish() {
-  BatterySample sample;
   if (openCanSocket()) {
     for (const auto &query : config_.can.queries) {
-      collectQuery(query, sample);
+      collectQuery(query, sample_);
       if (can_fd_ < 0) {
         break;
       }
     }
   }
-  publish(sample);
+  publish(sample_);
 }
 
 void BatteryBridge::collectQuery(const QueryConfig &query,
                                  BatterySample &sample) {
   if (query.send_request) {
-    can_frame stale{};
-    while (::recv(can_fd_, &stale, sizeof(stale), MSG_DONTWAIT) > 0) {
-    }
-
     can_frame request{};
     request.can_id = wireId(query.request_id, query.extended);
     request.can_dlc = static_cast<__u8>(query.request_data.size());

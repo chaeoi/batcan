@@ -21,6 +21,7 @@ class BatteryBridge final : public rclcpp::Node {
   void publish(const BatterySample &sample);
 
   Config config_;
+  BatterySample sample_;
   int can_fd_ = -1;
   rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
