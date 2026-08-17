@@ -9,7 +9,7 @@ can:
   response_timeout_ms: 800
 
 ros:
-  topic: /bms_can/battery_data
+  topic: /batcan/data
   frame_id: battery
   localhost_only: true
   domain_id: 0

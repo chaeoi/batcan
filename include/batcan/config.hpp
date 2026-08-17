@@ -45,7 +45,7 @@ struct CanConfig {
 };
 
 struct RosConfig {
-  std::string topic = "/bms_can/battery_data";
+  std::string topic = "/batcan/data";
   std::string frame_id = "battery";
   bool localhost_only = true;
   int domain_id = 0;

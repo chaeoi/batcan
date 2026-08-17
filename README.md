@@ -1,6 +1,6 @@
 # batcan
 
-`batcan` 是一个 SocketCAN 到 ROS 2 的电池数据桥接程序。它从 BMS 的 CAN 总线读取电池信息，并在固定主题 `/bms_can/battery_data` 发布标准消息 `sensor_msgs/msg/BatteryState`。
+`batcan` 是一个 SocketCAN 到 ROS 2 的电池数据桥接程序。它从 BMS 的 CAN 总线读取电池信息，并在固定主题 `/batcan/data` 发布标准消息 `sensor_msgs/msg/BatteryState`。
 
 ## 目录架构
 
@@ -32,7 +32,7 @@
 
 - 通过 SocketCAN 连接 BMS，按型号配置发送查询或接收广播。
 - 将电压、电流、温度、剩余电量和供电状态转换为 `sensor_msgs/msg/BatteryState`。
-- 在固定主题 `/bms_can/battery_data` 发布数据，电量比例采用 0 到 1 的标准范围。
+- 在固定主题 `/batcan/data` 发布数据，电量比例采用 0 到 1 的标准范围。
 - 仓库中的每个型号使用独立 `models/*.yml` 文件维护 CAN 接口、查询帧、响应 ID 和字段解析规则。
 - 查询、广播接收、响应匹配和字段解码均使用通用代码，不包含特定型号分支。
 - 打包时会把所有型号配置编入同一个二进制；目标设备的 `config.yml` 只需选择 `model`，不需要部署型号文件。

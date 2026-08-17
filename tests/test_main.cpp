@@ -50,7 +50,7 @@ void testDefaultConfig() {
           "KVMS response ID mask mismatch");
   require(config.model == "2m_v0.1.2", "model mismatch");
   require(config.bms_model == "KVMS", "BMS model mismatch");
-  require(config.ros.topic == "/bms_can/battery_data",
+  require(config.ros.topic == "/batcan/data",
           "default ROS topic mismatch");
 }
 
