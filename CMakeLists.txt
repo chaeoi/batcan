@@ -11,8 +11,8 @@ set(CMAKE_INSTALL_RPATH "/opt/ros/humble/lib;/opt/ros/humble/lib/aarch64-linux-g
 set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 
 find_package(ament_cmake REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
-find_package(sensor_msgs REQUIRED)
 
 file(GLOB BATCAN_MODEL_FILES CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/models/*.yml")
@@ -62,7 +62,7 @@ set_target_properties(batcan PROPERTIES
   INSTALL_RPATH "/opt/ros/humble/lib;/opt/ros/humble/lib/aarch64-linux-gnu;/opt/ros/humble/lib/x86_64-linux-gnu")
 target_include_directories(batcan PRIVATE include)
 target_link_libraries(batcan batcan_core)
-ament_target_dependencies(batcan rclcpp sensor_msgs)
+ament_target_dependencies(batcan diagnostic_msgs rclcpp)
 target_link_options(batcan PRIVATE -Wl,--disable-new-dtags)
 target_compile_definitions(batcan PRIVATE
   BATCAN_VERSION="${PROJECT_VERSION}")

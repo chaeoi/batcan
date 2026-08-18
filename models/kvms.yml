@@ -1,0 +1,713 @@
+model:
+  id: kvms
+  bms_model: KVMS
+
+can:
+  bitrate: 250000
+  query_interval_ms: 2000
+  response_timeout_ms: 1200
+
+ros:
+  topic: /batcan/data
+  frame_id: battery
+  localhost_only: true
+  domain_id: 0
+  qos_depth: 10
+
+queries:
+  - name: realtime
+    send_request: true
+    request:
+      id: 0x0400FF80
+      extended: true
+      data: 00 00 00 00 00 00 00 00
+    responses:
+      - name: cell_voltages
+        id: 0x04008000
+        id_mask: 0x1FFFFF00
+        extended: true
+        collect: true
+        sequence:
+          offset: 0
+          base: 1
+          stride: 3
+        fields:
+          - metric: cell_voltage
+            offset: 1
+            length: 2
+            index: 0
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+          - metric: cell_voltage
+            offset: 3
+            length: 2
+            index: 1
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+          - metric: cell_voltage
+            offset: 5
+            length: 2
+            index: 2
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+      - name: cell_temperatures
+        id: 0x04018000
+        id_mask: 0x1FFFFF00
+        extended: true
+        collect: true
+        sequence:
+          offset: 0
+          base: 1
+          stride: 7
+        fields:
+          - metric: cell_temperature
+            offset: 1
+            length: 1
+            index: 0
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+          - metric: cell_temperature
+            offset: 2
+            length: 1
+            index: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+          - metric: cell_temperature
+            offset: 3
+            length: 1
+            index: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+          - metric: cell_temperature
+            offset: 4
+            length: 1
+            index: 3
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+          - metric: cell_temperature
+            offset: 5
+            length: 1
+            index: 4
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+          - metric: cell_temperature
+            offset: 6
+            length: 1
+            index: 5
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+          - metric: cell_temperature
+            offset: 7
+            length: 1
+            index: 6
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+            invalid_values: 0xFF
+      - name: pack
+        id: 0x04028000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: voltage
+            offset: 0
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.1
+            bias: 0
+          - metric: current
+            offset: 2
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.1
+            bias: -3000
+          - metric: percentage
+            offset: 4
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+          - metric: life
+            offset: 6
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: total_information
+        id: 0x04038000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: power
+            offset: 0
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: total_energy
+            offset: 2
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: mos_temperature
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+          - metric: board_temperature
+            offset: 5
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+          - metric: heat_temperature
+            offset: 6
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+          - metric: heat_current
+            offset: 7
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: cell_voltage_statistics
+        id: 0x04048000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: max_cell_voltage
+            offset: 0
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+          - metric: max_cell_number
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: min_cell_voltage
+            offset: 3
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+          - metric: min_cell_number
+            offset: 5
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: cell_voltage_difference
+            offset: 6
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+      - name: cell_temperature_statistics
+        id: 0x04058000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: max_cell_temperature
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+          - metric: max_temperature_number
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: min_cell_temperature
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: -40
+          - metric: min_temperature_number
+            offset: 3
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: cell_temperature_difference
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: mos_state
+        id: 0x04068000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: charge_mos_state
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: discharge_mos_state
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: precharge_mos_state
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: heat_mos_state
+            offset: 3
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fan_mos_state
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: state
+        id: 0x04078000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: power_supply_status
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+            value_map: 0:3,1:1,2:2
+          - metric: charger_detect
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: load_detect
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: do_state
+            offset: 3
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: di_state
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: capacity
+        id: 0x04088000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: cell_count
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: ntc_count
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: charge
+            offset: 2
+            length: 4
+            encoding: uint
+            endian: big
+            scale: 0.001
+            bias: 0
+          - metric: remain_capacity_mAh
+            offset: 2
+            length: 4
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: cycle_count
+            offset: 6
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: hardware_faults
+        id: 0x04098000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: fault_byte_1
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_2
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_3
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_4
+            offset: 3
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_5
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_6
+            offset: 5
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_7
+            offset: 6
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_byte_8
+            offset: 7
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: auxiliary_0a
+        id: 0x040A8000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: auxiliary_0a_byte_1
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_2
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_3
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_4
+            offset: 3
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_5
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_6
+            offset: 5
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_7
+            offset: 6
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0a_byte_8
+            offset: 7
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: charge_information
+        id: 0x040B8000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: remaining_charge_time_min
+            offset: 0
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: wakeup_source
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: auxiliary_0c
+        id: 0x040C8000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: auxiliary_0c_byte_1
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_2
+            offset: 1
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_3
+            offset: 2
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_4
+            offset: 3
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_5
+            offset: 4
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_6
+            offset: 5
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_7
+            offset: 6
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: auxiliary_0c_byte_8
+            offset: 7
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: current_limit
+        id: 0x040D8000
+        id_mask: 0x1FFFFF00
+        extended: true
+        fields:
+          - metric: current_limit_state
+            offset: 0
+            length: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: current_limit
+            offset: 1
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 0.1
+            bias: -3000
+          - metric: soh
+            offset: 3
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: pwm_duty
+            offset: 5
+            length: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+      - name: fault_pages
+        id: 0x040E8000
+        id_mask: 0x1FFFFF00
+        extended: true
+        collect: true
+        sequence:
+          offset: 0
+          base: 1
+          stride: 7
+        fields:
+          - metric: fault_page_byte
+            offset: 1
+            length: 1
+            index: 0
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_page_byte
+            offset: 2
+            length: 1
+            index: 1
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_page_byte
+            offset: 3
+            length: 1
+            index: 2
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_page_byte
+            offset: 4
+            length: 1
+            index: 3
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_page_byte
+            offset: 5
+            length: 1
+            index: 4
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_page_byte
+            offset: 6
+            length: 1
+            index: 5
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0
+          - metric: fault_page_byte
+            offset: 7
+            length: 1
+            index: 6
+            encoding: uint
+            endian: big
+            scale: 1
+            bias: 0

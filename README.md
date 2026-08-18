@@ -1,116 +1,96 @@
 # batcan
 
-`batcan` 是一个 SocketCAN 到 ROS 2 的电池数据桥接程序。它从 BMS 的 CAN 总线读取电池信息，并在固定主题 `/batcan/data` 发布标准消息 `sensor_msgs/msg/BatteryState`。
+`batcan` reads BMS CAN traffic through SocketCAN and publishes every decoded
+response on one ROS 2 topic. It supports protocol profiles embedded into the
+binary, so target machines switch BMS only by editing a small runtime config.
 
-## 目录架构
+## Single topic
 
-```text
-.
-├── config.example.yml      # 运行配置示例，只选择型号
-├── cmake/
-│   └── embedded_models.hpp.in # 二进制资源嵌入模板
-├── doc/
-│   ├── KVMS-内网通信CAN协议-客户版.xlsx
-│   └── HTBMS-CAN协议-V1.1.0-20260630.docx
-├── include/batcan/         # 头文件与核心数据结构
-├── models/
-│   ├── README.md            # 型号配置格式说明
-│   └── 2m_v0.1.2.yml       # 独立机器人型号配置
-├── src/
-│   ├── main.cpp            # 命令行入口和 ROS 2 运行入口
-│   ├── config.cpp          # 运行配置解析
-│   ├── models.cpp          # 通用型号配置加载与校验
-│   ├── bridge.cpp          # SocketCAN 采集和 ROS 2 消息发布
-│   ├── protocol.cpp        # CAN 报文解析
-│   └── service.cpp         # systemd 服务安装与管理
-├── tests/                  # 配置和协议解析测试
-├── CMakeLists.txt          # ROS 2 软件包定义
-└── package.xml             # ROS 2 软件包元数据
-```
+`/batcan/data` has type `diagnostic_msgs/msg/DiagnosticArray`.
 
-## 功能
+Every message has an ordered `status[]` list:
 
-- 通过 SocketCAN 连接 BMS，按型号配置发送查询或接收广播。
-- 将电压、电流、温度、剩余电量和供电状态转换为 `sensor_msgs/msg/BatteryState`。
-- 在固定主题 `/batcan/data` 发布数据，电量比例采用 0 到 1 的标准范围。
-- 仓库中的每个型号使用独立 `models/*.yml` 文件维护 CAN 接口、查询帧、响应 ID 和字段解析规则。
-- 查询、广播接收、响应匹配和字段解码均使用通用代码，不包含特定型号分支。
-- 打包时会把所有型号配置编入同一个二进制；目标设备的 `config.yml` 只需选择 `model`，不需要部署型号文件。
-- 提供 systemd 服务，支持开机启动和异常重启；服务按型号配置自动设置 CAN 接口，并授予所需的 `CAP_NET_RAW`、`CAP_NET_ADMIN` 权限。
-
-## 支持的型号
-
-当前 Release 支持以下配置：
-
-| 机器人型号 | BMS 型号 | CAN 接口 | 采集方式 |
-| --- | --- | --- | --- |
-| `2m_v0.1.2` | `KVMS` | `can5` / 250 kbit/s | 每 2 秒发送查询帧 |
-
-`2m_v0.1.2` 使用查询帧 `0x0400FF80`，读取总压/电流/SOC、温度和状态响应。响应 ID 会匹配协议中的 BMS 板号通配符；静止状态会发布为 `NOT_CHARGING`。协议字段的字节序、倍率和偏移以 `doc/KVMS-内网通信CAN协议-客户版.xlsx` 为准。
-
-`doc/HTBMS-CAN协议-V1.1.0-20260630.docx` 是另一种 BMS 协议的原始资料。该资料中的 CAN 速率和设备地址需要结合具体机器人确认，因此当前 Release 尚未将其关联到机器人型号。
-
-## 部署
-
-### 前置条件
-
-- 目标设备为 Linux `amd64` 或 `arm64` 架构。
-- 已安装 ROS 2 Humble，路径为 `/opt/ros/humble`。
-- 系统存在 `ubuntu` 用户，且 BMS 使用的 CAN 适配器已经连接。
-- 设备可访问 GitHub，且已安装 `curl` 和 `sha256sum`。
-
-### 安装 Release
-
-从 [Release 页面](https://github.com/chaeoi/batcan/releases) 下载与目标架构相符的二进制：`batcan-linux-amd64` 或 `batcan-linux-arm64`，并下载同版本的 `SHA256SUMS`。校验后直接调用二进制内置的服务安装命令：
-
-```bash
-sha256sum -c --ignore-missing SHA256SUMS
-chmod 0755 batcan-linux-arm64
-sudo ./batcan-linux-arm64 service install
-```
-
-二进制会安装自身、注册 systemd 服务并处理配置文件。首次安装会生成一份所有支持型号均被注释的配置文件，选择型号后再启动服务。
-
-默认路径如下：
-
-| 文件 | 路径 |
+| Status name | Content |
 | --- | --- |
-| 安装目录 | `/opt/batcan` |
-| 可执行文件 | `/opt/batcan/batcan` |
-| 配置文件 | `/opt/batcan/config.yml` |
-| systemd 服务 | `/etc/systemd/system/batcan.service` |
-| ROS 2 日志 | `/var/log/batcan/ros` |
+| `batcan/<profile>/summary` | Common pack values that were received: voltage, current, temperature, SOC, capacities and power-supply state |
+| `batcan/<profile>/<response>` | Every field decoded from one supported BMS response, plus `raw.<response>` hexadecimal CAN bytes |
 
-### 配置与启动
+Repeated pages retain their page number in both metric and raw keys, for
+example `cell_voltage.1`, `cell_temperature.8`, `fault_page_byte.15`, and
+`raw.cell_voltages.1`. This makes a subscriber able to read only the response
+groups it needs while the topic still carries all supported data.
 
-安装后编辑配置：
+## BMS profiles
 
-```bash
-sudoedit /opt/batcan/config.yml
-```
+| Profile | BMS specification | CAN behavior | Default bitrate |
+| --- | --- | --- | --- |
+| `kvms` | KVMS | 29-bit extended CAN, actively sends `0x0400FF80`, big-endian response fields | 250 kbit/s |
+| `htbms_v1.1.0` | HTBMS CAN V1.1.0 | 29-bit extended `0x1822xxxx` broadcast, little-endian fields | 500 kbit/s |
+| `canbus_500k` | CANBUS communication protocol | 11-bit standard CAN, remote-frame queries `0x100` to `0x110`, big-endian Modbus CRC-16 responses | 500 kbit/s |
 
-默认内容类似下面这样。每个已编入二进制的型号对应一行，取消目标行前的 `#` 即可；只能保留一个有效的 `model`：
+The three profiles are different protocols. In particular, HTBMS is neither
+the KVMS query protocol nor the 11-bit CANBUS remote-query protocol. HTBMS
+documents 250 kbit/s and 500 kbit/s selectable operation; its profile defaults
+to 500 kbit/s and may be overridden at deployment if the installed BMS is set
+to 250 kbit/s.
+
+`kvms` includes all observed and documented reply IDs `0x040080**` through
+`0x040E80**`: pack data, individual cell voltages and temperatures, pack and
+cell extrema, MOS and I/O state, capacities, charge information, limits, fault
+pages, and the documented-but-unassigned `0x040A80**`/`0x040C80**` bytes. The
+last two are emitted as individual byte values and raw frames until their BMS
+vendor definitions are available.
+
+`canbus_500k` queries all documented non-empty IDs from `0x100` through
+`0x110`: pack/capacity data, balance/protection/FET/version/count information,
+six NTC temperatures, and up to 30 cell voltages. It does not query `0x111` or
+`0x112`, which are blank in the supplied protocol document.
+
+## Configuration
+
+The profile YAML files live only in `models/` in this repository. CMake embeds
+them into the executable. On a target machine, edit only `/opt/batcan/config.yml`:
 
 ```yaml
-# model: 2m_v0.1.2
+profile: kvms
+interface: can5
 ```
 
-检查配置并启动服务：
+`interface` is the local SocketCAN interface name and therefore depends on the
+machine (`can0`, `can5`, and so on). The BMS profile controls bitrate by default.
+Use the optional runtime `bitrate` only when the same BMS protocol has been
+configured to another supported physical rate, such as HTBMS at 250 kbit/s:
+
+```yaml
+profile: htbms_v1.1.0
+interface: can0
+bitrate: 250000
+```
+
+For a short migration period, legacy `model: 2m_v0.1.2` is accepted as an alias
+for `profile: kvms`; new configs should use `profile: kvms`.
+
+Validate and start the installed service:
 
 ```bash
 sudo /opt/batcan/batcan --check-config --config /opt/batcan/config.yml
 sudo systemctl enable --now batcan
 ```
 
-如果 `/opt/batcan/config.yml` 已存在且格式有效，安装或升级时会保留现有配置；如果文件不存在或格式无效，会直接重写为新的默认配置。
+## Build
 
-### 服务管理
+Source ROS 2 Humble and build the package from its workspace:
 
 ```bash
-sudo /opt/batcan/batcan service status
-sudo systemctl restart batcan
-sudo systemctl stop batcan
-sudo /opt/batcan/batcan service uninstall
+source /opt/ros/humble/setup.bash
+colcon build --packages-select batcan
 ```
 
-卸载会停止并移除 systemd 服务及日志，保留 `/opt/batcan` 目录中的程序和配置，便于后续重新注册服务。
+## Repository layout
+
+```text
+models/     Embedded BMS protocol profiles
+doc/        Supplied BMS protocol documents
+src/        Generic SocketCAN, profile parsing and ROS publishing code
+tests/      Profile and protocol decoding tests
+```

@@ -1,5 +1,7 @@
 #include "batcan/bridge.hpp"
 
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
 #include <linux/can.h>
 #include <linux/can/raw.h>
 #include <net/if.h>
@@ -14,7 +16,8 @@
 #include <chrono>
 #include <cerrno>
 #include <cstring>
-#include <limits>
+#include <iomanip>
+#include <sstream>
 #include <set>
 #include <string>
 #include <utility>
@@ -31,11 +34,37 @@ std::uint32_t idMask(const ResponseConfig &response) {
   const auto mask = response.id_mask == 0
                         ? (response.extended ? CAN_EFF_MASK : CAN_SFF_MASK)
                         : response.id_mask;
-  return mask | (response.extended ? CAN_EFF_FLAG : 0U);
+  return mask | CAN_EFF_FLAG | CAN_RTR_FLAG;
 }
 
-double valueOrNaN(const std::optional<double> &value) {
-  return value.value_or(std::numeric_limits<double>::quiet_NaN());
+void addValue(diagnostic_msgs::msg::DiagnosticStatus &status,
+              const std::string &key, double value) {
+  diagnostic_msgs::msg::KeyValue item;
+  item.key = key;
+  std::ostringstream stream;
+  stream << std::setprecision(12) << value;
+  item.value = stream.str();
+  status.values.push_back(std::move(item));
+}
+
+void addOptionalValue(diagnostic_msgs::msg::DiagnosticStatus &status,
+                      const std::string &key,
+                      const std::optional<double> &value) {
+  if (value.has_value()) {
+    addValue(status, key, *value);
+  }
+}
+
+std::string bytesToHex(const std::vector<std::uint8_t> &bytes) {
+  std::ostringstream stream;
+  stream << std::hex << std::setfill('0');
+  for (std::size_t index = 0; index < bytes.size(); ++index) {
+    if (index != 0) {
+      stream << ' ';
+    }
+    stream << std::setw(2) << static_cast<unsigned int>(bytes[index]);
+  }
+  return stream.str();
 }
 
 int runCommand(const std::vector<std::string> &arguments) {
@@ -73,7 +102,7 @@ bool configureCanInterface(const CanConfig &can) {
 
 BatteryBridge::BatteryBridge(Config config)
     : Node("batcan"), config_(std::move(config)) {
-  publisher_ = create_publisher<sensor_msgs::msg::BatteryState>(
+  publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       config_.ros.topic, rclcpp::QoS(config_.ros.qos_depth));
   timer_ = create_wall_timer(
       std::chrono::milliseconds(config_.can.query_interval_ms),
@@ -151,6 +180,7 @@ void BatteryBridge::closeCanSocket() {
 }
 
 void BatteryBridge::collectAndPublish() {
+  sample_.clear();
   if (openCanSocket()) {
     for (const auto &query : config_.can.queries) {
       collectQuery(query, sample_);
@@ -167,8 +197,13 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
   if (query.send_request) {
     can_frame request{};
     request.can_id = wireId(query.request_id, query.extended);
-    request.can_dlc = static_cast<__u8>(query.request_data.size());
-    std::copy(query.request_data.begin(), query.request_data.end(), request.data);
+    if (query.request_remote) {
+      request.can_id |= CAN_RTR_FLAG;
+    } else {
+      request.can_dlc = static_cast<__u8>(query.request_data.size());
+      std::copy(query.request_data.begin(), query.request_data.end(),
+                request.data);
+    }
     if (::write(can_fd_, &request, sizeof(request)) != sizeof(request)) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                            "send CAN query %s failed: %s", query.name.c_str(),
@@ -224,9 +259,16 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
       std::copy_n(frame.data, std::min<std::size_t>(frame.can_dlc, 8),
                   data.begin());
       try {
-        applyResponse(response, data, std::min<std::size_t>(frame.can_dlc, 8),
-                      sample);
-        pending.erase(index);
+        const auto data_length = std::min<std::size_t>(frame.can_dlc, 8);
+        if (!validateResponse(response, data, data_length)) {
+          RCLCPP_WARN(get_logger(), "discarded response 0x%X with invalid CRC",
+                      response.id);
+          break;
+        }
+        applyResponse(response, data, data_length, sample);
+        if (!response.collect) {
+          pending.erase(index);
+        }
       } catch (const std::exception &error) {
         RCLCPP_WARN(get_logger(), "decode response 0x%X failed: %s",
                     response.id, error.what());
@@ -237,24 +279,66 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
 }
 
 void BatteryBridge::publish(const BatterySample &sample) {
-  sensor_msgs::msg::BatteryState message;
-  message.header.stamp = now();
-  message.header.frame_id = config_.ros.frame_id;
-  message.voltage = valueOrNaN(sample.voltage);
-  message.current = valueOrNaN(sample.current);
-  message.temperature = valueOrNaN(sample.temperature);
-  message.percentage = valueOrNaN(sample.percentage);
-  message.charge = valueOrNaN(sample.charge);
-  message.capacity = valueOrNaN(sample.capacity);
-  message.design_capacity = valueOrNaN(sample.design_capacity);
-  message.power_supply_status = sample.power_supply_status.value_or(
-      sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_UNKNOWN);
-  message.power_supply_health = sample.power_supply_health.value_or(
-      sensor_msgs::msg::BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN);
-  message.power_supply_technology = sample.power_supply_technology.value_or(
-      sensor_msgs::msg::BatteryState::POWER_SUPPLY_TECHNOLOGY_UNKNOWN);
-  message.present = sample.present;
-  publisher_->publish(message);
+  diagnostic_msgs::msg::DiagnosticArray details;
+  details.header.stamp = now();
+  details.header.frame_id = config_.ros.frame_id;
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.level = sample.present ? diagnostic_msgs::msg::DiagnosticStatus::OK
+                                : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+  status.name = "batcan/" + config_.model + "/summary";
+  status.hardware_id = config_.bms_model;
+  status.message = sample.present ? "BMS data received" : "No BMS data received";
+  addOptionalValue(status, "voltage", sample.voltage);
+  addOptionalValue(status, "current", sample.current);
+  addOptionalValue(status, "temperature", sample.temperature);
+  addOptionalValue(status, "percentage", sample.percentage);
+  addOptionalValue(status, "charge", sample.charge);
+  addOptionalValue(status, "capacity", sample.capacity);
+  addOptionalValue(status, "design_capacity", sample.design_capacity);
+  if (sample.power_supply_status.has_value()) {
+    addValue(status, "power_supply_status", *sample.power_supply_status);
+  }
+  if (sample.power_supply_health.has_value()) {
+    addValue(status, "power_supply_health", *sample.power_supply_health);
+  }
+  if (sample.power_supply_technology.has_value()) {
+    addValue(status, "power_supply_technology",
+             *sample.power_supply_technology);
+  }
+  details.status.push_back(std::move(status));
+  std::set<std::string> response_names;
+  for (const auto &[response_name, metrics] : sample.response_metrics) {
+    (void)metrics;
+    response_names.insert(response_name);
+  }
+  for (const auto &[response_name, raw_frames] : sample.response_raw_frames) {
+    (void)raw_frames;
+    response_names.insert(response_name);
+  }
+  for (const auto &response_name : response_names) {
+    diagnostic_msgs::msg::DiagnosticStatus response_status;
+    response_status.level = diagnostic_msgs::msg::DiagnosticStatus::OK;
+    response_status.name = "batcan/" + config_.model + "/" + response_name;
+    response_status.hardware_id = config_.bms_model;
+    response_status.message = "Decoded response " + response_name;
+    const auto metrics = sample.response_metrics.find(response_name);
+    if (metrics != sample.response_metrics.end()) {
+      for (const auto &[name, value] : metrics->second) {
+        addValue(response_status, name, value);
+      }
+    }
+    const auto raw = sample.response_raw_frames.find(response_name);
+    if (raw != sample.response_raw_frames.end()) {
+      for (const auto &[name, data] : raw->second) {
+        diagnostic_msgs::msg::KeyValue item;
+        item.key = "raw." + name;
+        item.value = bytesToHex(data);
+        response_status.values.push_back(std::move(item));
+      }
+    }
+    details.status.push_back(std::move(response_status));
+  }
+  publisher_->publish(details);
 }
 
 }  // namespace batcan

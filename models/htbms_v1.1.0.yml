@@ -1,0 +1,67 @@
+model:
+  id: htbms_v1.1.0
+  bms_model: HTBMS-CAN-V1.1.0
+
+can:
+  bitrate: 500000
+  query_interval_ms: 1000
+  response_timeout_ms: 1200
+
+ros:
+  topic: /batcan/data
+  frame_id: battery
+  localhost_only: true
+  domain_id: 0
+  qos_depth: 10
+
+queries:
+  - name: broadcast
+    send_request: false
+    responses:
+      - name: htbms_status
+        id: 0x18220000
+        id_mask: 0x1FFF0000
+        extended: true
+        fields:
+          - metric: voltage
+            offset: 0
+            length: 2
+            encoding: uint
+            endian: little
+            scale: 0.1
+            bias: 0
+          - metric: current
+            offset: 2
+            length: 2
+            encoding: int
+            endian: little
+            scale: 1
+            bias: 0
+          - metric: temperature
+            offset: 4
+            length: 1
+            encoding: int
+            endian: little
+            scale: 1
+            bias: 0
+          - metric: percentage
+            offset: 5
+            length: 1
+            encoding: uint
+            endian: little
+            scale: 0.005
+            bias: 0
+          - metric: status_low
+            offset: 6
+            length: 1
+            encoding: uint
+            endian: little
+            scale: 1
+            bias: 0
+          - metric: status_high
+            offset: 7
+            length: 1
+            encoding: uint
+            endian: little
+            scale: 1
+            bias: 0

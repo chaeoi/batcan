@@ -1,7 +1,7 @@
 #pragma once
 
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/battery_state.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 
 #include "batcan/config.hpp"
 #include "batcan/protocol.hpp"
@@ -23,7 +23,8 @@ class BatteryBridge final : public rclcpp::Node {
   Config config_;
   BatterySample sample_;
   int can_fd_ = -1;
-  rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr publisher_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr
+      publisher_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 

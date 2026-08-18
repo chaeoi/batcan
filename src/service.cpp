@@ -149,7 +149,7 @@ void installService(const std::vector<std::string> &arguments,
   runCommand({"systemctl", "daemon-reload"});
   if (!valid_config) {
     runCommand({"systemctl", "disable", "--now", "batcan.service"}, true);
-    std::cout << "installed batcan.service; select one model in "
+    std::cout << "installed batcan.service; select one profile in "
               << kInstalledConfig << " and start it with: systemctl enable "
               << "--now batcan\n";
     return;

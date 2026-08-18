@@ -10,7 +10,7 @@ struct Model {
   std::string_view content;
 };
 
-inline constexpr std::array<Model, @BATCAN_EMBEDDED_MODEL_COUNT@> kModels = {
-@BATCAN_EMBEDDED_MODEL_ENTRIES@};
+inline constexpr std::array<Model, @BATCAN_EMBEDDED_MODEL_COUNT@> kModels = {{
+@BATCAN_EMBEDDED_MODEL_ENTRIES@}};
 
 }  // namespace batcan::embedded

@@ -1,2 +1,10 @@
-# Uncomment exactly one model line.
-# model: 2m_v0.1.2
+# Select exactly one embedded BMS profile.
+# profile: kvms
+# profile: htbms_v1.1.0
+# profile: canbus_500k
+
+# SocketCAN interface on this machine. The profile default is can5.
+# interface: can5
+
+# Only override this when the installed BMS has a configurable bitrate.
+# bitrate: 250000

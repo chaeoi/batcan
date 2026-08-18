@@ -12,19 +12,27 @@ struct FieldConfig {
   std::string metric;
   std::size_t offset = 0;
   std::size_t length = 0;
+  std::size_t index = 0;
   std::string encoding = "uint";
   std::string endian = "big";
   double scale = 1.0;
   double bias = 0.0;
   std::map<std::uint8_t, std::uint8_t> value_map;
+  std::vector<std::uint8_t> invalid_values;
 };
 
 struct ResponseConfig {
+  std::string name;
   std::uint32_t id = 0;
   bool extended = true;
   std::vector<FieldConfig> fields;
   // Zero means an exact ID match; otherwise only the masked ID bits match.
   std::uint32_t id_mask = 0;
+  bool collect = false;
+  bool crc16 = false;
+  std::size_t sequence_offset = 0;
+  std::uint32_t sequence_base = 0;
+  std::size_t sequence_stride = 0;
 };
 
 struct QueryConfig {
@@ -32,6 +40,7 @@ struct QueryConfig {
   bool send_request = true;
   std::uint32_t request_id = 0;
   bool extended = true;
+  bool request_remote = false;
   std::vector<std::uint8_t> request_data;
   std::vector<ResponseConfig> responses;
 };

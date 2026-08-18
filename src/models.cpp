@@ -40,11 +40,7 @@ struct Property {
 const std::regex kModelName("^[A-Za-z0-9._-]{1,64}$");
 const std::regex kName("^[A-Za-z0-9_-]{1,64}$");
 const std::regex kYamlKey("^[A-Za-z][A-Za-z0-9_]*$");
-const std::set<std::string> kMetrics = {
-    "voltage",           "current",       "temperature",
-    "percentage",        "charge",        "capacity",
-    "design_capacity",   "power_supply_status",
-    "power_supply_health", "power_supply_technology"};
+const std::regex kMetricName("^[A-Za-z][A-Za-z0-9_.-]{0,63}$");
 
 std::string trim(std::string value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -448,11 +444,11 @@ FieldConfig parseField(const YamlNode &node, const std::string &model,
   const auto &field_map = asMap(node, model, context);
   validateKeys(field_map,
                {"metric", "offset", "length", "encoding", "endian",
-                "scale", "bias", "value_map"},
+                "scale", "bias", "value_map", "index", "invalid_values"},
                model, context);
   FieldConfig field;
   field.metric = requiredScalar(field_map, "metric", model, context);
-  if (kMetrics.find(field.metric) == kMetrics.end()) {
+  if (!std::regex_match(field.metric, kMetricName)) {
     invalid(model, context + ".metric is unknown");
   }
   field.offset = parseUnsigned(
@@ -463,6 +459,10 @@ FieldConfig parseField(const YamlNode &node, const std::string &model,
       context + ".length");
   if (field.length == 0 || field.offset + field.length > 8) {
     invalid(model, context + " exceeds a CAN frame");
+  }
+  const auto index = optionalScalar(field_map, "index", model, context);
+  if (!index.empty()) {
+    field.index = parseUnsigned(index, 255U, model, context + ".index");
   }
   field.encoding = requiredScalar(field_map, "encoding", model, context);
   if (field.encoding != "uint" && field.encoding != "int") {
@@ -481,6 +481,15 @@ FieldConfig parseField(const YamlNode &node, const std::string &model,
   if (!value_map.empty()) {
     field.value_map =
         parseValueMap(value_map, model, context + ".value_map");
+  }
+  const auto invalid_values =
+      optionalScalar(field_map, "invalid_values", model, context);
+  if (!invalid_values.empty()) {
+    for (const auto &item : parseList(invalid_values, model,
+                                      context + ".invalid_values")) {
+      field.invalid_values.push_back(static_cast<std::uint8_t>(parseUnsigned(
+          item, 0xFFU, model, context + ".invalid_values")));
+    }
   }
   return field;
 }
@@ -514,7 +523,10 @@ Config parseModel(const embedded::Model &resource) {
                {"interface", "bitrate", "query_interval_ms",
                 "response_timeout_ms"},
                model, "can");
-  config.can.interface = requiredScalar(can_map, "interface", model, "can");
+  const auto interface = optionalScalar(can_map, "interface", model, "can");
+  if (!interface.empty()) {
+    config.can.interface = interface;
+  }
   if (!std::regex_match(config.can.interface, kName)) {
     invalid(model, "can.interface is invalid");
   }
@@ -537,8 +549,7 @@ Config parseModel(const embedded::Model &resource) {
   const auto &ros_map = asMap(requiredNode(root_map, "ros", model, "root"),
                               model, "ros");
   validateKeys(ros_map,
-               {"topic", "frame_id", "localhost_only", "domain_id",
-                "qos_depth"},
+               {"topic", "frame_id", "localhost_only", "domain_id", "qos_depth"},
                model, "ros");
   config.ros.topic = requiredScalar(ros_map, "topic", model, "ros");
   config.ros.frame_id = requiredScalar(ros_map, "frame_id", model, "ros");
@@ -585,7 +596,7 @@ Config parseModel(const embedded::Model &resource) {
     if (request != query_map.end()) {
       const auto request_context = context + ".request";
       const auto &request_map = asMap(request->second, model, request_context);
-      validateKeys(request_map, {"id", "extended", "data"}, model,
+      validateKeys(request_map, {"id", "extended", "data", "remote"}, model,
                    request_context);
       query.request_id = parseUnsigned(
           requiredScalar(request_map, "id", model, request_context),
@@ -593,6 +604,12 @@ Config parseModel(const embedded::Model &resource) {
       query.extended = parseBoolean(
           requiredScalar(request_map, "extended", model, request_context),
           model, request_context + ".extended");
+      const auto remote =
+          optionalScalar(request_map, "remote", model, request_context);
+      if (!remote.empty()) {
+        query.request_remote = parseBoolean(remote, model,
+                                            request_context + ".remote");
+      }
       query.request_data = parseBytes(
           requiredScalar(request_map, "data", model, request_context), model,
           request_context + ".data");
@@ -609,7 +626,8 @@ Config parseModel(const embedded::Model &resource) {
       const auto &response_map =
           asMap(response_nodes[response_index], model, response_context);
       validateKeys(response_map,
-                   {"name", "id", "id_mask", "extended", "fields"}, model,
+                   {"name", "id", "id_mask", "extended", "fields",
+                    "collect", "crc16", "sequence"}, model,
                    response_context);
       const auto response_name =
           requiredScalar(response_map, "name", model, response_context);
@@ -620,6 +638,7 @@ Config parseModel(const embedded::Model &resource) {
       }
 
       ResponseConfig response;
+      response.name = response_name;
       response.id = parseUnsigned(
           requiredScalar(response_map, "id", model, response_context),
           0x1FFFFFFFU, model, response_context + ".id");
@@ -632,6 +651,40 @@ Config parseModel(const embedded::Model &resource) {
       response.extended = parseBoolean(
           requiredScalar(response_map, "extended", model, response_context),
           model, response_context + ".extended");
+      const auto collect =
+          optionalScalar(response_map, "collect", model, response_context);
+      if (!collect.empty()) {
+        response.collect = parseBoolean(collect, model,
+                                        response_context + ".collect");
+      }
+      const auto crc16 =
+          optionalScalar(response_map, "crc16", model, response_context);
+      if (!crc16.empty()) {
+        if (crc16 != "modbus") {
+          invalid(model, response_context + ".crc16 must be modbus");
+        }
+        response.crc16 = true;
+      }
+      const auto sequence = response_map.find("sequence");
+      if (sequence != response_map.end()) {
+        const auto sequence_context = response_context + ".sequence";
+        const auto &sequence_map =
+            asMap(sequence->second, model, sequence_context);
+        validateKeys(sequence_map, {"offset", "base", "stride"}, model,
+                     sequence_context);
+        response.sequence_offset = parseUnsigned(
+            requiredScalar(sequence_map, "offset", model, sequence_context),
+            7U, model, sequence_context + ".offset");
+        response.sequence_base = parseUnsigned(
+            requiredScalar(sequence_map, "base", model, sequence_context),
+            255U, model, sequence_context + ".base");
+        response.sequence_stride = parseUnsigned(
+            requiredScalar(sequence_map, "stride", model, sequence_context),
+            255U, model, sequence_context + ".stride");
+        if (response.sequence_stride == 0) {
+          invalid(model, sequence_context + ".stride must be positive");
+        }
+      }
 
       const auto &field_nodes = asSequence(
           requiredNode(response_map, "fields", model, response_context), model,
@@ -663,12 +716,13 @@ Config parseModel(const embedded::Model &resource) {
 
 Config loadModel(const std::string &model) {
   requireModelName(model);
+  const auto profile = model == "2m_v0.1.2" ? "kvms" : model;
   for (const auto &resource : embedded::kModels) {
-    if (resource.name == model) {
+    if (resource.name == profile) {
       return parseModel(resource);
     }
   }
-  throw std::runtime_error("unsupported model " + model);
+  throw std::runtime_error("unsupported model " + profile);
 }
 
 std::vector<ModelInfo> supportedModels() {

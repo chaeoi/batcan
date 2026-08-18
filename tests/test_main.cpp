@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 #include "batcan/config.hpp"
 #include "batcan/protocol.hpp"
@@ -16,16 +17,38 @@ void require(bool condition, const char *message) {
   }
 }
 
+batcan::FieldConfig field(const std::string &metric, std::size_t offset,
+                          std::size_t length, const std::string &encoding,
+                          const std::string &endian, double scale,
+                          double bias) {
+  batcan::FieldConfig result;
+  result.metric = metric;
+  result.offset = offset;
+  result.length = length;
+  result.encoding = encoding;
+  result.endian = endian;
+  result.scale = scale;
+  result.bias = bias;
+  return result;
+}
+
+std::filesystem::path writeConfig(const std::string &contents,
+                                   const char *name) {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  std::ofstream stream(path);
+  stream << contents;
+  return path;
+}
+
 void testDefaultConfig() {
   const auto generated = batcan::defaultConfig();
-  require(generated.find("# model: 2m_v0.1.2") != std::string::npos,
-          "default config must list the supported model as a comment");
-  const auto path = std::filesystem::temp_directory_path() /
-                    "batcan-default-test.yml";
-  {
-    std::ofstream stream(path);
-    stream << generated;
-  }
+  require(generated.find("# profile: kvms") != std::string::npos,
+          "default config must list KVMS profile");
+  require(generated.find("# profile: htbms_v1.1.0") != std::string::npos,
+          "default config must list HTBMS profile");
+  require(generated.find("# profile: canbus_500k") != std::string::npos,
+          "default config must list CANBUS profile");
+  const auto path = writeConfig(generated, "batcan-default-test.yml");
   bool selection_required = false;
   try {
     (void)batcan::loadConfig(path.string());
@@ -33,34 +56,54 @@ void testDefaultConfig() {
     selection_required = true;
   }
   require(selection_required, "commented default config must require selection");
-  {
-    std::ofstream stream(path, std::ios::trunc);
-    stream << "model: 2m_v0.1.2\n";
-  }
-  const auto config = batcan::loadConfig(path.string());
   std::filesystem::remove(path);
-  require(config.can.interface == "can5", "default CAN interface mismatch");
-  require(config.can.bitrate == 250000, "default CAN bitrate mismatch");
-  require(config.can.queries.size() == 1, "default query count mismatch");
-  require(config.can.queries[0].responses.size() == 3,
-          "default response count mismatch");
-  require(config.can.queries[0].responses[0].id == 0x04028000U,
-          "KVMS response ID base mismatch");
-  require(config.can.queries[0].responses[0].id_mask == 0x1FFFFF00U,
-          "KVMS response ID mask mismatch");
-  require(config.model == "2m_v0.1.2", "model mismatch");
+
+  const auto kvms_path =
+      writeConfig("profile: kvms\ninterface: can1\n", "batcan-kvms-test.yml");
+  const auto config = batcan::loadConfig(kvms_path.string());
+  std::filesystem::remove(kvms_path);
+  require(config.can.interface == "can1", "interface override mismatch");
+  require(config.can.bitrate == 250000, "KVMS bitrate mismatch");
+  require(config.can.queries.size() == 1, "KVMS query count mismatch");
+  require(config.can.queries[0].responses.size() >= 14,
+          "KVMS must expose all supported response pages");
+  require(config.can.queries[0].responses[0].id == 0x04008000U,
+          "KVMS cell response ID mismatch");
+  require(config.can.queries[0].responses[0].collect,
+          "KVMS cell response must collect repeated pages");
+  require(config.model == "kvms", "profile mismatch");
   require(config.bms_model == "KVMS", "BMS model mismatch");
-  require(config.ros.topic == "/batcan/data",
-          "default ROS topic mismatch");
+  require(config.ros.topic == "/batcan/data", "single topic mismatch");
 }
 
-void testRejectsCANConfiguration() {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "batcan-invalid-test.yml";
-  {
-    std::ofstream stream(path);
-    stream << "model: 2m_v0.1.2\ncan:\n  interface: can0\n";
-  }
+void testOtherProfiles() {
+  const auto htbms_path = writeConfig("profile: htbms_v1.1.0\n",
+                                      "batcan-htbms-test.yml");
+  const auto htbms = batcan::loadConfig(htbms_path.string());
+  std::filesystem::remove(htbms_path);
+  require(htbms.can.bitrate == 500000, "HTBMS default bitrate mismatch");
+  require(htbms.can.queries.size() == 1 && !htbms.can.queries[0].send_request,
+          "HTBMS must use passive broadcast collection");
+  require(htbms.can.queries[0].responses[0].id_mask == 0x1FFF0000U,
+          "HTBMS ID mask mismatch");
+
+  const auto canbus_path =
+      writeConfig("profile: canbus_500k\n", "batcan-canbus-test.yml");
+  const auto canbus = batcan::loadConfig(canbus_path.string());
+  std::filesystem::remove(canbus_path);
+  require(canbus.can.queries.size() == 17,
+          "CANBUS must query IDs 0x100 through 0x110");
+  require(canbus.can.queries.front().request_remote,
+          "CANBUS requests must be remote frames");
+  require(!canbus.can.queries.front().extended,
+          "CANBUS requests must use standard IDs");
+  require(canbus.can.queries.front().responses.front().crc16,
+          "CANBUS responses must use CRC-16");
+}
+
+void testRejectsInvalidRuntimeConfig() {
+  const auto path = writeConfig("profile: kvms\ncan:\n  interface: can0\n",
+                                "batcan-invalid-test.yml");
   bool rejected = false;
   try {
     (void)batcan::loadConfig(path.string());
@@ -68,34 +111,27 @@ void testRejectsCANConfiguration() {
     rejected = true;
   }
   std::filesystem::remove(path);
-  require(rejected, "external CAN configuration must be rejected");
-}
+  require(rejected, "nested runtime CAN configuration must be rejected");
 
-void testRejectsMultipleModels() {
-  const auto path = std::filesystem::temp_directory_path() /
-                    "batcan-multiple-models-test.yml";
-  {
-    std::ofstream stream(path);
-    stream << "model: 2m_v0.1.2\nmodel: 2m_v0.1.2\n";
-  }
-  bool rejected = false;
+  const auto duplicate = writeConfig("profile: kvms\nprofile: htbms_v1.1.0\n",
+                                     "batcan-duplicate-test.yml");
+  rejected = false;
   try {
-    (void)batcan::loadConfig(path.string());
+    (void)batcan::loadConfig(duplicate.string());
   } catch (const std::exception &) {
     rejected = true;
   }
-  std::filesystem::remove(path);
-  require(rejected, "multiple model fields must be rejected");
+  std::filesystem::remove(duplicate);
+  require(rejected, "multiple profiles must be rejected");
 }
 
 void testKvmsDecode() {
   batcan::BatterySample sample;
   batcan::ResponseConfig pack;
-  pack.fields = {
-      {"voltage", 0, 2, "uint", "big", 0.1, 0.0, {}},
-      {"current", 2, 2, "uint", "big", 0.1, -3000.0, {}},
-      {"percentage", 4, 2, "uint", "big", 0.001, 0.0, {}},
-  };
+  pack.name = "pack";
+  pack.fields = {field("voltage", 0, 2, "uint", "big", 0.1, 0.0),
+                 field("current", 2, 2, "uint", "big", 0.1, -3000.0),
+                 field("percentage", 4, 2, "uint", "big", 0.001, 0.0)};
   const std::array<std::uint8_t, 8> data = {
       0x02, 0x0C, 0x75, 0x99, 0x03, 0x84, 0x00, 0x00};
   batcan::applyResponse(pack, data, data.size(), sample);
@@ -106,25 +142,58 @@ void testKvmsDecode() {
           "current decode mismatch");
   require(std::abs(sample.percentage.value() - 0.9) < 0.0001,
           "percentage decode mismatch");
+  require(sample.response_metrics["pack"].count("voltage") == 1,
+          "response metrics must include standard fields");
+  require(sample.response_raw_frames["pack"].count("pack") == 1,
+          "response metrics must include raw frame");
+}
 
-  batcan::BatterySample status_sample;
-  batcan::ResponseConfig status;
-  status.fields = {{"power_supply_status", 0, 1, "uint", "big", 1.0, 0.0,
-                    {{0, 3}, {1, 1}, {2, 2}}}};
-  const std::array<std::uint8_t, 8> stationary = {0, 0, 0, 0, 0, 0, 0, 0};
-  batcan::applyResponse(status, stationary, stationary.size(), status_sample);
-  require(status_sample.power_supply_status.value() == 3,
-          "KVMS stationary status mismatch");
+void testSequenceDecode() {
+  batcan::ResponseConfig cells;
+  cells.name = "cell_voltages";
+  cells.sequence_offset = 0;
+  cells.sequence_base = 1;
+  cells.sequence_stride = 3;
+  auto first = field("cell_voltage", 1, 2, "uint", "big", 0.001, 0.0);
+  auto second = field("cell_voltage", 3, 2, "uint", "big", 0.001, 0.0);
+  auto third = field("cell_voltage", 5, 2, "uint", "big", 0.001, 0.0);
+  first.index = 0;
+  second.index = 1;
+  third.index = 2;
+  cells.fields = {first, second, third};
+  const std::array<std::uint8_t, 8> data = {
+      0x02, 0x0C, 0x75, 0x0C, 0x76, 0x0C, 0x77, 0x00};
+  batcan::BatterySample sample;
+  batcan::applyResponse(cells, data, data.size(), sample);
+  require(sample.cell_voltage.size() == 6, "sequence index mismatch");
+  require(std::abs(sample.cell_voltage[3] - 3.189) < 0.0001,
+          "sequence cell value mismatch");
+  require(sample.response_raw_frames["cell_voltages"].count(
+              "cell_voltages.2") == 1,
+          "sequence raw frame name mismatch");
 }
 
 void testSignedLittleEndianDecode() {
-  const batcan::FieldConfig field{
-      "current", 0, 2, "int", "little", 0.01, 0.0, {}};
+  const auto field_config = field("current", 0, 2, "int", "little", 0.01,
+                                  0.0);
   const std::array<std::uint8_t, 8> data = {
       0x9C, 0xFF, 0, 0, 0, 0, 0, 0};
-  const auto value = batcan::decodeField(field, data, data.size());
+  const auto value = batcan::decodeField(field_config, data, data.size());
   require(std::abs(value - (-1.0)) < 0.0001,
           "signed little-endian decode mismatch");
+}
+
+void testCrc16Modbus() {
+  batcan::ResponseConfig response;
+  response.crc16 = true;
+  const std::array<std::uint8_t, 8> valid = {
+      0x13, 0xE8, 0xFF, 0x9C, 0x00, 0x64, 0x7E, 0x93};
+  require(batcan::validateResponse(response, valid, valid.size()),
+          "valid Modbus CRC must be accepted");
+  auto invalid = valid;
+  invalid[7] ^= 0x01;
+  require(!batcan::validateResponse(response, invalid, invalid.size()),
+          "invalid Modbus CRC must be rejected");
 }
 
 }  // namespace
@@ -132,10 +201,12 @@ void testSignedLittleEndianDecode() {
 int main() {
   try {
     testDefaultConfig();
-    testRejectsCANConfiguration();
-    testRejectsMultipleModels();
+    testOtherProfiles();
+    testRejectsInvalidRuntimeConfig();
     testKvmsDecode();
+    testSequenceDecode();
     testSignedLittleEndianDecode();
+    testCrc16Modbus();
     std::cout << "all tests passed\n";
     return 0;
   } catch (const std::exception &error) {
