@@ -25,8 +25,8 @@ groups it needs while the topic still carries all supported data.
 | Profile | BMS specification | CAN behavior | Default bitrate |
 | --- | --- | --- | --- |
 | `kvms` | KVMS | 29-bit extended CAN, actively sends `0x0400FF80`, big-endian response fields | 250 kbit/s |
-| `htbms_v1.1.0` | HTBMS CAN V1.1.0 | 29-bit extended `0x1822xxxx` broadcast, little-endian fields | 500 kbit/s |
-| `canbus_500k` | CANBUS communication protocol | 11-bit standard CAN, remote-frame queries `0x100` to `0x110`, big-endian Modbus CRC-16 responses | 500 kbit/s |
+| `htbms` | HTBMS CAN V1.1.0 | 29-bit extended `0x1822xxxx` broadcast, little-endian fields | 500 kbit/s |
+| `jbd` | JBD-compatible CANBUS | 11-bit standard CAN, remote-frame queries `0x100` to `0x110`, big-endian Modbus CRC-16 responses | 500 kbit/s |
 
 The three profiles are different protocols. In particular, HTBMS is neither
 the KVMS query protocol nor the 11-bit CANBUS remote-query protocol. HTBMS
@@ -41,7 +41,7 @@ pages, and the documented-but-unassigned `0x040A80**`/`0x040C80**` bytes. The
 last two are emitted as individual byte values and raw frames until their BMS
 vendor definitions are available.
 
-`canbus_500k` queries all documented non-empty IDs from `0x100` through
+`jbd` queries all documented non-empty IDs from `0x100` through
 `0x110`: pack/capacity data, balance/protection/FET/version/count information,
 six NTC temperatures, and up to 30 cell voltages. It does not query `0x111` or
 `0x112`, which are blank in the supplied protocol document.
@@ -62,13 +62,15 @@ Use the optional runtime `bitrate` only when the same BMS protocol has been
 configured to another supported physical rate, such as HTBMS at 250 kbit/s:
 
 ```yaml
-profile: htbms_v1.1.0
+profile: htbms
 interface: can0
 bitrate: 250000
 ```
 
-For a short migration period, legacy `model: 2m_v0.1.2` is accepted as an alias
-for `profile: kvms`; new configs should use `profile: kvms`.
+For migration, `model: 2m_v0.1.2`, `profile: htbms_v1.1.0`, and
+`profile: canbus_500k` remain accepted as aliases. `profile: canbus` is also
+accepted for builds made during the rename. New configs should use the short
+profile names above.
 
 Validate and start the installed service:
 

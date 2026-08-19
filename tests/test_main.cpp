@@ -44,10 +44,10 @@ void testDefaultConfig() {
   const auto generated = batcan::defaultConfig();
   require(generated.find("# profile: kvms") != std::string::npos,
           "default config must list KVMS profile");
-  require(generated.find("# profile: htbms_v1.1.0") != std::string::npos,
+  require(generated.find("# profile: htbms") != std::string::npos,
           "default config must list HTBMS profile");
-  require(generated.find("# profile: canbus_500k") != std::string::npos,
-          "default config must list CANBUS profile");
+  require(generated.find("# profile: jbd") != std::string::npos,
+          "default config must list JBD profile");
   const auto path = writeConfig(generated, "batcan-default-test.yml");
   bool selection_required = false;
   try {
@@ -77,7 +77,7 @@ void testDefaultConfig() {
 }
 
 void testOtherProfiles() {
-  const auto htbms_path = writeConfig("profile: htbms_v1.1.0\n",
+  const auto htbms_path = writeConfig("profile: htbms\n",
                                       "batcan-htbms-test.yml");
   const auto htbms = batcan::loadConfig(htbms_path.string());
   std::filesystem::remove(htbms_path);
@@ -87,18 +87,30 @@ void testOtherProfiles() {
   require(htbms.can.queries[0].responses[0].id_mask == 0x1FFF0000U,
           "HTBMS ID mask mismatch");
 
+  const auto htbms_alias_path =
+      writeConfig("profile: htbms_v1.1.0\n", "batcan-htbms-alias-test.yml");
+  const auto htbms_alias = batcan::loadConfig(htbms_alias_path.string());
+  std::filesystem::remove(htbms_alias_path);
+  require(htbms_alias.model == "htbms", "HTBMS compatibility alias mismatch");
+
   const auto canbus_path =
-      writeConfig("profile: canbus_500k\n", "batcan-canbus-test.yml");
+      writeConfig("profile: jbd\n", "batcan-jbd-test.yml");
   const auto canbus = batcan::loadConfig(canbus_path.string());
   std::filesystem::remove(canbus_path);
   require(canbus.can.queries.size() == 17,
-          "CANBUS must query IDs 0x100 through 0x110");
+          "JBD must query IDs 0x100 through 0x110");
   require(canbus.can.queries.front().request_remote,
-          "CANBUS requests must be remote frames");
+          "JBD requests must be remote frames");
   require(!canbus.can.queries.front().extended,
-          "CANBUS requests must use standard IDs");
+          "JBD requests must use standard IDs");
   require(canbus.can.queries.front().responses.front().crc16,
-          "CANBUS responses must use CRC-16");
+          "JBD responses must use CRC-16");
+
+  const auto canbus_alias_path =
+      writeConfig("profile: canbus_500k\n", "batcan-canbus-alias-test.yml");
+  const auto canbus_alias = batcan::loadConfig(canbus_alias_path.string());
+  std::filesystem::remove(canbus_alias_path);
+  require(canbus_alias.model == "jbd", "CANBUS compatibility alias mismatch");
 }
 
 void testRejectsInvalidRuntimeConfig() {
@@ -113,7 +125,7 @@ void testRejectsInvalidRuntimeConfig() {
   std::filesystem::remove(path);
   require(rejected, "nested runtime CAN configuration must be rejected");
 
-  const auto duplicate = writeConfig("profile: kvms\nprofile: htbms_v1.1.0\n",
+  const auto duplicate = writeConfig("profile: kvms\nprofile: htbms\n",
                                      "batcan-duplicate-test.yml");
   rejected = false;
   try {

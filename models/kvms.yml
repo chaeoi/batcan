@@ -1,3 +1,28 @@
+# Protocol profile: KVMS.
+#
+# Observed/documented protocol: 250 kbit/s, 29-bit extended CAN. The host
+# actively sends 0x0400FF80 and receives 0x040080** through 0x040E80** pages.
+# Response fields are big-endian.
+#
+# Installed battery information supplied by the battery vendor:
+#   - battery supplier/label: 心向阳
+#   - internal BMS: DALY (达锂) K series
+#   - installed configuration: 13S, 100A
+# DALY publishes both hardware and software K-series products covering 3-24S
+# and 40/60/100A. J24K3 is the likely board type only if this is the hardware
+# variant; the label/interface is still needed to distinguish the two. KVMS
+# remains the profile name because this file describes the battery pack's
+# external CAN protocol. Its 0x0400FF80/0x040x80** frames do not match DALY's
+# usual public CAN IDs, so the pack may contain an intermediate controller or
+# a customized interface. Do not replace these fields with a generic DALY
+# protocol without a matching capture.
+#
+# Confirmed from the supplied customer protocol and captured frames:
+#   - pack voltage/current/SOC and limits
+#   - repeated cell-voltage and temperature pages
+#   - fault, MOS, capacity and charge-state pages
+# Still unconfirmed: hardware/software variant, exact board type, chemistry
+# and interface topology.
 model:
   id: kvms
   bms_model: KVMS

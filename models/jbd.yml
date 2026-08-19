@@ -1,6 +1,18 @@
+# Protocol profile: JBD CANBUS (public protocol match; exact board part number
+# is not identified).
+#
+# The supplied CANBUS document matches the publicly available JBD CANBUS
+# protocol: 500 kbit/s, 11-bit standard CAN, host RTR queries 0x100..0x110,
+# big-endian values and Modbus CRC-16. It covers pack/capacity/protection data,
+# up to six NTC values and cell-voltage pages through 30 cells.
+#
+# This protocol match does not prove a specific JBD hardware SKU and it does
+# not identify the separately reported DALY K-series board. For DALY K-series
+# (J24K3, 13S, 100A), capture the actual CAN/UART/RS485 traffic before adding a
+# profile; the hardware name alone does not define a compatible wire protocol.
 model:
-  id: canbus_500k
-  bms_model: CANBUS-500K
+  id: jbd
+  bms_model: JBD-CANBUS
 
 can:
   bitrate: 500000

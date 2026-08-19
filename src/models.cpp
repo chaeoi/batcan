@@ -716,7 +716,14 @@ Config parseModel(const embedded::Model &resource) {
 
 Config loadModel(const std::string &model) {
   requireModelName(model);
-  const auto profile = model == "2m_v0.1.2" ? "kvms" : model;
+  auto profile = model;
+  if (model == "2m_v0.1.2") {
+    profile = "kvms";
+  } else if (model == "htbms_v1.1.0") {
+    profile = "htbms";
+  } else if (model == "canbus_500k" || model == "canbus") {
+    profile = "jbd";
+  }
   for (const auto &resource : embedded::kModels) {
     if (resource.name == profile) {
       return parseModel(resource);

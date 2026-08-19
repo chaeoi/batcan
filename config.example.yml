@@ -1,7 +1,10 @@
 # Select exactly one embedded BMS profile.
+# kvms: 心向阳 pack, DALY K-series 13S 100A inside, KVMS external CAN.
+# htbms: Zhenyuan HTBMS CAN V1.1.0, 0x1822xxxx broadcast, 250/500 kbit/s.
+# jbd: JBD CANBUS-compatible 11-bit RTR protocol, 500 kbit/s.
 # profile: kvms
-# profile: htbms_v1.1.0
-# profile: canbus_500k
+# profile: htbms
+# profile: jbd
 
 # SocketCAN interface on this machine. The profile default is can5.
 # interface: can5
