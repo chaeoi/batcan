@@ -20,8 +20,11 @@
 #include <sstream>
 #include <set>
 #include <string>
+#include <stdexcept>
 #include <utility>
 #include <vector>
+
+#include "batcan/models.hpp"
 
 namespace batcan {
 namespace {
@@ -44,6 +47,14 @@ void addValue(diagnostic_msgs::msg::DiagnosticStatus &status,
   std::ostringstream stream;
   stream << std::setprecision(12) << value;
   item.value = stream.str();
+  status.values.push_back(std::move(item));
+}
+
+void addText(diagnostic_msgs::msg::DiagnosticStatus &status,
+             const std::string &key, const std::string &value) {
+  diagnostic_msgs::msg::KeyValue item;
+  item.key = key;
+  item.value = value;
   status.values.push_back(std::move(item));
 }
 
@@ -101,7 +112,26 @@ bool configureCanInterface(const CanConfig &can) {
 }  // namespace
 
 BatteryBridge::BatteryBridge(Config config)
-    : Node("batcan"), config_(std::move(config)) {
+    : Node("batcan"), config_(std::move(config)), auto_config_(config_) {
+  if (config_.auto_detect) {
+    candidates_.reserve(config_.auto_profiles.size());
+    for (const auto &selector : config_.auto_profiles) {
+      auto candidate = loadModel(selector);
+      if (config_.interface_override) {
+        candidate.can.interface = config_.can.interface;
+      }
+      if (config_.bitrate_override) {
+        candidate.can.bitrate = config_.can.bitrate;
+      }
+      candidate.ros = config_.ros;
+      candidates_.push_back(std::move(candidate));
+    }
+    if (candidates_.empty()) {
+      throw std::runtime_error("automatic BMS detection has no candidates");
+    }
+    config_.can.interface = candidates_.front().can.interface;
+    config_.can.bitrate = candidates_.front().can.bitrate;
+  }
   publisher_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
       config_.ros.topic, rclcpp::QoS(config_.ros.qos_depth));
   timer_ = create_wall_timer(
@@ -181,6 +211,12 @@ void BatteryBridge::closeCanSocket() {
 
 void BatteryBridge::collectAndPublish() {
   sample_.clear();
+  if (auto_config_.auto_detect &&
+      active_candidate_ == static_cast<std::size_t>(-1)) {
+    (void)detectProfile(sample_);
+    publish(sample_);
+    return;
+  }
   if (openCanSocket()) {
     for (const auto &query : config_.can.queries) {
       collectQuery(query, sample_);
@@ -189,7 +225,72 @@ void BatteryBridge::collectAndPublish() {
       }
     }
   }
+  if (auto_config_.auto_detect) {
+    if (sample_.present) {
+      missed_cycles_ = 0;
+    } else if (++missed_cycles_ >= 3U) {
+      RCLCPP_WARN(get_logger(),
+                  "lost BMS profile %s; returning to automatic detection",
+                  config_.model.c_str());
+      closeCanSocket();
+      active_candidate_ = static_cast<std::size_t>(-1);
+      config_ = auto_config_;
+      missed_cycles_ = 0;
+    }
+  }
   publish(sample_);
+}
+
+bool BatteryBridge::detectProfile(BatterySample &sample) {
+  closeCanSocket();
+  std::size_t match = static_cast<std::size_t>(-1);
+  BatterySample matched_sample;
+  for (std::size_t index = 0; index < candidates_.size(); ++index) {
+    config_ = candidates_[index];
+    BatterySample probe;
+    if (!openCanSocket()) {
+      continue;
+    }
+    // Stop at the first valid protocol response; this also handles profiles
+    // whose first query is quiet while a later query is actively answered.
+    for (const auto &query : config_.can.queries) {
+      collectQuery(query, probe);
+      if (can_fd_ < 0) {
+        break;
+      }
+      if (probe.present) {
+        break;
+      }
+    }
+    if (!probe.present) {
+      closeCanSocket();
+      continue;
+    }
+    if (match != static_cast<std::size_t>(-1)) {
+      RCLCPP_ERROR(get_logger(),
+                   "automatic BMS detection is ambiguous between %s and %s",
+                   candidates_[match].model.c_str(),
+                   candidates_[index].model.c_str());
+      closeCanSocket();
+      config_ = auto_config_;
+      return false;
+    }
+    match = index;
+    matched_sample = std::move(probe);
+    closeCanSocket();
+  }
+  if (match != static_cast<std::size_t>(-1)) {
+    active_candidate_ = match;
+    config_ = candidates_[match];
+    missed_cycles_ = 0;
+    sample = std::move(matched_sample);
+    RCLCPP_INFO(get_logger(), "detected BMS profile %s (%s)",
+                config_.model.c_str(), config_.bms_model.c_str());
+    return true;
+  }
+  closeCanSocket();
+  config_ = auto_config_;
+  return false;
 }
 
 void BatteryBridge::collectQuery(const QueryConfig &query,
@@ -288,6 +389,9 @@ void BatteryBridge::publish(const BatterySample &sample) {
   status.name = "batcan/" + config_.model + "/summary";
   status.hardware_id = config_.bms_model;
   status.message = sample.present ? "BMS data received" : "No BMS data received";
+  addText(status, "profile", config_.model);
+  addText(status, "profile_id", config_.model_id);
+  addText(status, "profile_mode", auto_config_.auto_detect ? "auto" : "manual");
   addOptionalValue(status, "voltage", sample.voltage);
   addOptionalValue(status, "current", sample.current);
   addOptionalValue(status, "temperature", sample.temperature);

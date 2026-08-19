@@ -1,7 +1,13 @@
-# Select exactly one immutable BMS profile UUID and leave the other two commented out.
+# Choose one manual BMS UUID, or use the automatic mode below with candidates.
 # profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # kvms: 心向阳 DALY K-series 13S 100A, external KVMS CAN.
 # profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558 # htbms: Zhenyuan HTBMS CAN V1.1.0.
 # profile: d7a1d64a-6671-4ee2-8fbd-859043083a68 # jbd: JBD CANBUS-compatible protocol.
 
 # interface: can5 # SocketCAN interface on this machine, such as can0 or can5.
 # bitrate: 250000 # Optional physical-rate override; otherwise use profile default.
+
+# Automatic mode: use one process and let it identify the connected BMS.
+# profile: auto
+# profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b558
+# interface: can5
+# bitrate: auto

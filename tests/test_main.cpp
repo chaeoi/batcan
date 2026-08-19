@@ -58,7 +58,7 @@ void testDefaultConfig() {
           "default config must list JBD profile");
   require(generated.find("# interface: can5 #") != std::string::npos,
           "default config must annotate interface");
-  require(generated.find("# bitrate: 250000 #") != std::string::npos,
+  require(generated.find("# bitrate: auto #") != std::string::npos,
           "default config must annotate bitrate");
   const auto path = writeConfig(generated, "batcan-default-test.yml");
   bool selection_required = false;
@@ -100,6 +100,38 @@ void testDefaultConfig() {
   require(commented.model == "kvms" && commented.can.interface == "can2" &&
               commented.can.bitrate == 250000,
           "inline config comments must be ignored");
+
+  const auto auto_path = writeConfig(
+      "profile: auto\n"
+      "profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204, "
+      "fc3da911-07a0-42b3-8cb4-1aa8dd26b558\n"
+      "interface: can7\n"
+      "bitrate: auto\n",
+      "batcan-auto-test.yml");
+  const auto automatic = batcan::loadConfig(auto_path.string());
+  std::filesystem::remove(auto_path);
+  require(automatic.auto_detect, "auto profile mode must be enabled");
+  require(automatic.auto_profiles.size() == 2,
+          "auto profile candidates mismatch");
+  require(automatic.model == "auto" && automatic.model_id == "auto",
+          "auto profile identity mismatch");
+  require(automatic.can.interface == "can7" &&
+              automatic.can.bitrate == 250000,
+          "auto profile must retain first candidate defaults");
+  require(automatic.interface_override && !automatic.bitrate_override,
+          "auto runtime overrides mismatch");
+
+  const auto invalid_auto_path = writeConfig(
+      "profile: auto\nprofiles: kvms\n", "batcan-invalid-auto-test.yml");
+  bool invalid_auto_rejected = false;
+  try {
+    (void)batcan::loadConfig(invalid_auto_path.string());
+  } catch (const std::exception &) {
+    invalid_auto_rejected = true;
+  }
+  std::filesystem::remove(invalid_auto_path);
+  require(invalid_auto_rejected,
+          "automatic candidates must require valid UUIDs");
 }
 
 void testOtherProfiles() {

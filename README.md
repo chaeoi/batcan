@@ -75,10 +75,30 @@ interface: can0
 bitrate: 250000
 ```
 
+### Automatic profile selection
+
+When the battery can be changed without editing the deployed configuration,
+run one bridge process in automatic mode. The candidates are UUIDs from the
+embedded catalogue; the bridge tries each candidate's bitrate and protocol,
+locks the sole candidate that produces a valid response, and publishes the
+selected `profile`, `profile_id`, and `profile_mode` in the summary status:
+
+```yaml
+profile: auto
+profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b558
+interface: can5
+bitrate: auto
+```
+
+Do not start two bridge processes on the same CAN interface. Automatic mode
+owns the interface, probes one protocol at a time, and returns to detection
+after three consecutive cycles without a valid frame. If more than one
+candidate matches, the bridge does not guess; use an explicit UUID instead.
+
 For migration, `model: 2m_v0.1.2`, `profile: htbms_v1.1.0`, and
 `profile: canbus_500k` remain accepted as aliases. `profile: canbus` is also
-accepted for builds made during the rename. New configs should use the short
-profile names above.
+accepted for builds made during the rename. New configurations should use the
+immutable UUIDs shown above.
 
 Validate and start the installed service:
 

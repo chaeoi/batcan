@@ -65,6 +65,10 @@ struct Config {
   std::string model;
   std::string model_id;
   std::string bms_model;
+  bool auto_detect = false;
+  std::vector<std::string> auto_profiles;
+  bool interface_override = false;
+  bool bitrate_override = false;
   CanConfig can;
   RosConfig ros;
 };
