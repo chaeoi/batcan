@@ -123,8 +123,8 @@ std::string defaultConfig() {
   std::string config =
       "# Select one BMS profile and optionally override the CAN interface.\n";
   for (const auto &model : supportedModels()) {
-    config +=
-        "# profile: " + model.profile + " # " + model.bms_model + " profile.\n";
+    config += "# profile: " + model.id + " # " + model.profile + ": " +
+              model.bms_model + ".\n";
   }
   config += "# interface: can5 # SocketCAN interface on this machine.\n";
   config += "# bitrate: 250000 # Optional physical-rate override.\n";

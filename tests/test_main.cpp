@@ -44,15 +44,18 @@ std::filesystem::path writeConfig(const std::string &contents,
 
 void testDefaultConfig() {
   const auto generated = batcan::defaultConfig();
-  require(generated.find("# profile: kvms") != std::string::npos,
-          "default config must list KVMS profile");
-  require(generated.find("# profile: htbms") != std::string::npos,
-          "default config must list HTBMS profile");
-  require(generated.find("# profile: jbd") != std::string::npos,
-          "default config must list JBD profile");
-  require(generated.find("# profile: kvms # KVMS profile.") !=
+  require(generated.find(
+              "# profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # kvms:") !=
               std::string::npos,
-          "default config must annotate profiles");
+          "default config must list KVMS profile");
+  require(generated.find(
+              "# profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558 # htbms:") !=
+              std::string::npos,
+          "default config must list HTBMS profile");
+  require(generated.find(
+              "# profile: d7a1d64a-6671-4ee2-8fbd-859043083a68 # jbd:") !=
+              std::string::npos,
+          "default config must list JBD profile");
   require(generated.find("# interface: can5 #") != std::string::npos,
           "default config must annotate interface");
   require(generated.find("# bitrate: 250000 #") != std::string::npos,
@@ -67,8 +70,9 @@ void testDefaultConfig() {
   require(selection_required, "commented default config must require selection");
   std::filesystem::remove(path);
 
-  const auto kvms_path =
-      writeConfig("profile: kvms\ninterface: can1\n", "batcan-kvms-test.yml");
+  const auto kvms_path = writeConfig(
+      "profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\ninterface: can1\n",
+      "batcan-kvms-test.yml");
   const auto config = batcan::loadConfig(kvms_path.string());
   std::filesystem::remove(kvms_path);
   require(config.can.interface == "can1", "interface override mismatch");
@@ -87,7 +91,7 @@ void testDefaultConfig() {
   require(config.ros.topic == "/batcan/data", "single topic mismatch");
 
   const auto commented_path = writeConfig(
-      "profile: kvms # select the protocol\n"
+      "profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # select the protocol\n"
       "interface: can2 # machine-specific interface\n"
       "bitrate: 250000 # explicit physical rate\n",
       "batcan-inline-comments-test.yml");
@@ -99,8 +103,9 @@ void testDefaultConfig() {
 }
 
 void testOtherProfiles() {
-  const auto htbms_path = writeConfig("profile: htbms\n",
-                                      "batcan-htbms-test.yml");
+  const auto htbms_path = writeConfig(
+      "profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558\n",
+      "batcan-htbms-test.yml");
   const auto htbms = batcan::loadConfig(htbms_path.string());
   std::filesystem::remove(htbms_path);
   require(htbms.can.bitrate == 500000, "HTBMS default bitrate mismatch");
@@ -115,8 +120,9 @@ void testOtherProfiles() {
   std::filesystem::remove(htbms_alias_path);
   require(htbms_alias.model == "htbms", "HTBMS compatibility alias mismatch");
 
-  const auto canbus_path =
-      writeConfig("profile: jbd\n", "batcan-jbd-test.yml");
+  const auto canbus_path = writeConfig(
+      "profile: d7a1d64a-6671-4ee2-8fbd-859043083a68\n",
+      "batcan-jbd-test.yml");
   const auto canbus = batcan::loadConfig(canbus_path.string());
   std::filesystem::remove(canbus_path);
   require(canbus.can.queries.size() == 17,
@@ -133,6 +139,13 @@ void testOtherProfiles() {
   const auto canbus_alias = batcan::loadConfig(canbus_alias_path.string());
   std::filesystem::remove(canbus_alias_path);
   require(canbus_alias.model == "jbd", "CANBUS compatibility alias mismatch");
+
+  const auto short_name_path =
+      writeConfig("profile: kvms\n", "batcan-short-name-test.yml");
+  const auto short_name = batcan::loadConfig(short_name_path.string());
+  std::filesystem::remove(short_name_path);
+  require(short_name.model_id == "98b8d1c1-6a34-45a4-9687-e9a09ef20204",
+          "short profile compatibility selector mismatch");
 }
 
 void testUniqueModelIds() {
@@ -143,6 +156,9 @@ void testUniqueModelIds() {
     require(model.id.size() == 36, "model ID must be a UUID");
     require(ids.insert(model.id).second, "embedded model IDs must be unique");
   }
+  require(models[0].profile == "kvms" && models[1].profile == "htbms" &&
+              models[2].profile == "jbd",
+          "embedded profile names must remain stable");
 }
 
 void testRejectsInvalidRuntimeConfig() {

@@ -48,18 +48,21 @@ six NTC temperatures, and up to 30 cell voltages. It does not query `0x111` or
 
 ## Configuration
 
-The profile YAML files live only in `models/` in this repository. CMake embeds
-them into the executable. On a target machine, edit only `/opt/batcan/config.yml`:
+The BMS profile documents live only in `models/bms.yml` in this repository.
+CMake embeds that file into the executable. On a target machine, edit only
+`/opt/batcan/config.yml`:
 
 ```yaml
-profile: kvms
+profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204
 interface: can5
 ```
 
-Each embedded YAML has a unique immutable UUID in `model.id`; the runtime
-configuration uses the shorter profile filename (`kvms`, `htbms`, or `jbd`).
-The generated config template annotates every selectable field with an inline
-remark, and the parser accepts those remarks when the file is edited.
+The repository contains one embedded `models/bms.yml` file with one YAML
+document per protocol. Each document has a unique immutable UUID in `model.id`;
+use that UUID in runtime configuration. The shorter names (`kvms`, `htbms`,
+`jbd`) remain accepted as compatibility selectors. The generated config template
+annotates every selectable field with an inline remark, and the parser accepts
+those remarks when the file is edited.
 
 `interface` is the local SocketCAN interface name and therefore depends on the
 machine (`can0`, `can5`, and so on). The BMS profile controls bitrate by default.
@@ -67,7 +70,7 @@ Use the optional runtime `bitrate` only when the same BMS protocol has been
 configured to another supported physical rate, such as HTBMS at 250 kbit/s:
 
 ```yaml
-profile: htbms
+profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558
 interface: can0
 bitrate: 250000
 ```

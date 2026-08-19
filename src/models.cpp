@@ -496,15 +496,14 @@ FieldConfig parseField(const YamlNode &node, const std::string &model,
   return field;
 }
 
-Config parseModel(const embedded::Model &resource) {
-  const std::string model(resource.name);
+Config parseProfile(const YamlNode &root, const std::string &source) {
+  const auto &root_map = asMap(root, source, "profile");
+  validateKeys(root_map, {"profile", "model", "can", "ros", "queries"},
+               source, "profile");
+  const auto model = requiredScalar(root_map, "profile", source, "profile");
   requireModelName(model);
-  const auto root = parseYaml(std::string(resource.content), model);
-  const auto &root_map = asMap(root, model, "root");
-  validateKeys(root_map, {"model", "can", "ros", "queries"}, model,
-               "root");
 
-  const auto &model_map = asMap(requiredNode(root_map, "model", model, "root"),
+  const auto &model_map = asMap(requiredNode(root_map, "model", model, "profile"),
                                 model, "model");
   validateKeys(model_map, {"id", "bms_model"}, model, "model");
   Config config;
@@ -714,22 +713,60 @@ Config parseModel(const embedded::Model &resource) {
   return config;
 }
 
-void validateEmbeddedModelIds() {
+std::vector<std::string> splitYamlDocuments(const std::string &content) {
+  std::vector<std::string> documents;
+  std::istringstream input(content);
+  std::ostringstream document;
+  std::string line;
+  while (std::getline(input, line)) {
+    if (trim(line) == "---") {
+      if (!trim(document.str()).empty()) {
+        documents.push_back(document.str());
+      }
+      document.str("");
+      document.clear();
+      continue;
+    }
+    document << line << '\n';
+  }
+  if (!trim(document.str()).empty()) {
+    documents.push_back(document.str());
+  }
+  return documents;
+}
+
+std::vector<Config> embeddedProfiles() {
+  if (embedded::kModels.size() != 1) {
+    throw std::runtime_error("exactly one embedded BMS configuration is required");
+  }
+  const auto documents =
+      splitYamlDocuments(std::string(embedded::kModels.front().content));
+  if (documents.empty()) {
+    throw std::runtime_error("embedded BMS configuration has no profiles");
+  }
+  std::vector<Config> profiles;
+  profiles.reserve(documents.size());
   std::set<std::string> ids;
-  for (const auto &resource : embedded::kModels) {
-    const auto config = parseModel(resource);
+  std::set<std::string> names;
+  for (std::size_t index = 0; index < documents.size(); ++index) {
+    const auto source = "bms." + std::to_string(index + 1);
+    auto config = parseProfile(parseYaml(documents[index], source), source);
     if (!ids.insert(config.model_id).second) {
       throw std::runtime_error("duplicate embedded model id " +
                                config.model_id);
     }
+    if (!names.insert(config.model).second) {
+      throw std::runtime_error("duplicate embedded profile " + config.model);
+    }
+    profiles.push_back(std::move(config));
   }
+  return profiles;
 }
 
 }  // namespace
 
 Config loadModel(const std::string &model) {
   requireModelName(model);
-  validateEmbeddedModelIds();
   auto profile = model;
   if (model == "2m_v0.1.2") {
     profile = "kvms";
@@ -738,20 +775,19 @@ Config loadModel(const std::string &model) {
   } else if (model == "canbus_500k" || model == "canbus") {
     profile = "jbd";
   }
-  for (const auto &resource : embedded::kModels) {
-    if (resource.name == profile) {
-      return parseModel(resource);
+  for (const auto &config : embeddedProfiles()) {
+    if (config.model_id == profile || config.model == profile) {
+      return config;
     }
   }
   throw std::runtime_error("unsupported model " + profile);
 }
 
 std::vector<ModelInfo> supportedModels() {
-  validateEmbeddedModelIds();
   std::vector<ModelInfo> models;
-  models.reserve(embedded::kModels.size());
-  for (const auto &resource : embedded::kModels) {
-    const auto config = parseModel(resource);
+  const auto profiles = embeddedProfiles();
+  models.reserve(profiles.size());
+  for (const auto &config : profiles) {
     models.push_back(
         ModelInfo{config.model, config.model_id, config.bms_model});
   }
