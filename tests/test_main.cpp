@@ -3,10 +3,12 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 
 #include "batcan/config.hpp"
+#include "batcan/models.hpp"
 #include "batcan/protocol.hpp"
 
 namespace {
@@ -48,6 +50,13 @@ void testDefaultConfig() {
           "default config must list HTBMS profile");
   require(generated.find("# profile: jbd") != std::string::npos,
           "default config must list JBD profile");
+  require(generated.find("# profile: kvms # KVMS profile.") !=
+              std::string::npos,
+          "default config must annotate profiles");
+  require(generated.find("# interface: can5 #") != std::string::npos,
+          "default config must annotate interface");
+  require(generated.find("# bitrate: 250000 #") != std::string::npos,
+          "default config must annotate bitrate");
   const auto path = writeConfig(generated, "batcan-default-test.yml");
   bool selection_required = false;
   try {
@@ -72,8 +81,21 @@ void testDefaultConfig() {
   require(config.can.queries[0].responses[0].collect,
           "KVMS cell response must collect repeated pages");
   require(config.model == "kvms", "profile mismatch");
+  require(config.model_id == "98b8d1c1-6a34-45a4-9687-e9a09ef20204",
+          "KVMS unique model ID mismatch");
   require(config.bms_model == "KVMS", "BMS model mismatch");
   require(config.ros.topic == "/batcan/data", "single topic mismatch");
+
+  const auto commented_path = writeConfig(
+      "profile: kvms # select the protocol\n"
+      "interface: can2 # machine-specific interface\n"
+      "bitrate: 250000 # explicit physical rate\n",
+      "batcan-inline-comments-test.yml");
+  const auto commented = batcan::loadConfig(commented_path.string());
+  std::filesystem::remove(commented_path);
+  require(commented.model == "kvms" && commented.can.interface == "can2" &&
+              commented.can.bitrate == 250000,
+          "inline config comments must be ignored");
 }
 
 void testOtherProfiles() {
@@ -111,6 +133,16 @@ void testOtherProfiles() {
   const auto canbus_alias = batcan::loadConfig(canbus_alias_path.string());
   std::filesystem::remove(canbus_alias_path);
   require(canbus_alias.model == "jbd", "CANBUS compatibility alias mismatch");
+}
+
+void testUniqueModelIds() {
+  const auto models = batcan::supportedModels();
+  require(models.size() == 3, "expected three embedded profiles");
+  std::set<std::string> ids;
+  for (const auto &model : models) {
+    require(model.id.size() == 36, "model ID must be a UUID");
+    require(ids.insert(model.id).second, "embedded model IDs must be unique");
+  }
 }
 
 void testRejectsInvalidRuntimeConfig() {
@@ -214,6 +246,7 @@ int main() {
   try {
     testDefaultConfig();
     testOtherProfiles();
+    testUniqueModelIds();
     testRejectsInvalidRuntimeConfig();
     testKvmsDecode();
     testSequenceDecode();

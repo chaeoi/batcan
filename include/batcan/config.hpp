@@ -63,6 +63,7 @@ struct RosConfig {
 
 struct Config {
   std::string model;
+  std::string model_id;
   std::string bms_model;
   CanConfig can;
   RosConfig ros;

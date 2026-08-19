@@ -20,6 +20,30 @@ std::string trim(std::string value) {
   return value.substr(first, last - first + 1);
 }
 
+std::string removeComment(const std::string &line) {
+  bool single_quoted = false;
+  bool double_quoted = false;
+  bool escaped = false;
+  for (std::size_t index = 0; index < line.size(); ++index) {
+    const char value = line[index];
+    if (double_quoted && value == '\\' && !escaped) {
+      escaped = true;
+      continue;
+    }
+    if (value == '\'' && !double_quoted && !escaped) {
+      single_quoted = !single_quoted;
+    } else if (value == '"' && !single_quoted && !escaped) {
+      double_quoted = !double_quoted;
+    } else if (value == '#' && !single_quoted && !double_quoted &&
+               (index == 0 || line[index - 1] == ' ' ||
+                line[index - 1] == '\t')) {
+      return line.substr(0, index);
+    }
+    escaped = false;
+  }
+  return line;
+}
+
 }  // namespace
 
 Config loadConfig(const std::string &path) {
@@ -34,8 +58,8 @@ Config loadConfig(const std::string &path) {
   std::size_t line_number = 0;
   while (std::getline(input, line)) {
     ++line_number;
-    line = trim(std::move(line));
-    if (line.empty() || line.front() == '#') {
+    line = trim(removeComment(line));
+    if (line.empty()) {
       continue;
     }
     const auto separator = line.find(':');
@@ -99,10 +123,11 @@ std::string defaultConfig() {
   std::string config =
       "# Select one BMS profile and optionally override the CAN interface.\n";
   for (const auto &model : supportedModels()) {
-    config += "# profile: " + model.id + "\n";
+    config +=
+        "# profile: " + model.profile + " # " + model.bms_model + " profile.\n";
   }
-  config += "# interface: can5\n";
-  config += "# bitrate: 250000\n";
+  config += "# interface: can5 # SocketCAN interface on this machine.\n";
+  config += "# bitrate: 250000 # Optional physical-rate override.\n";
   return config;
 }
 

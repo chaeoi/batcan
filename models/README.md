@@ -1,10 +1,12 @@
 # BMS profiles
 
-Each YAML file describes one BMS protocol profile. Its filename and `model.id`
-must match. These files exist only in the repository: CMake embeds every
-`models/*.yml` file in the `batcan` executable at build time. Target machines
-switch profiles only through `/opt/batcan/config.yml`; they do not need profile
-files deployed beside the binary.
+Each YAML file describes one BMS protocol profile. Its short filename is the
+runtime `profile` value; `model.id` is an independent, immutable UUID and must
+be unique across all embedded profiles. These files exist only in the
+repository: CMake embeds every `models/*.yml` file in the `batcan` executable
+at build time. Target machines switch profiles only through
+`/opt/batcan/config.yml`; they do not need profile files deployed beside the
+binary.
 
 Profiles contain BMS protocol defaults, including bitrate, query timing, CAN
 IDs, byte order, CRC validation and field decoding. The target-machine config
@@ -13,7 +15,7 @@ BMS whose installed bitrate is configurable.
 
 | Node | Fields | Purpose |
 | --- | --- | --- |
-| `model` | `id`, `bms_model` | Stable BMS profile identifier and specification name |
+| `model` | `id`, `bms_model` | Unique immutable UUID and specification name |
 | `can` | `bitrate`, `query_interval_ms`, `response_timeout_ms` | Protocol defaults |
 | `ros` | `topic`, `frame_id`, `localhost_only`, `domain_id`, `qos_depth` | Publish settings |
 | `queries[]` | `name`, `send_request`, `request`, `responses` | Active query or passive broadcast collection |

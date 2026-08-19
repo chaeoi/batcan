@@ -8,6 +8,7 @@
 namespace batcan {
 
 struct ModelInfo {
+  std::string profile;
   std::string id;
   std::string bms_model;
 };

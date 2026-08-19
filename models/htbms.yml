@@ -10,8 +10,8 @@
 # This file describes the wire protocol only. The installed battery's serial,
 # capacity, chemistry and current rating must come from its label or capture.
 model:
-  id: htbms
-  bms_model: HTBMS-CAN-V1.1.0
+  id: fc3da911-07a0-42b3-8cb4-1aa8dd26b558 # Stable unique profile ID.
+  bms_model: HTBMS-CAN-V1.1.0 # Supplied protocol specification.
 
 can:
   bitrate: 500000

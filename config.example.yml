@@ -1,13 +1,7 @@
-# Select exactly one embedded BMS profile.
-# kvms: 心向阳 pack, DALY K-series 13S 100A inside, KVMS external CAN.
-# htbms: Zhenyuan HTBMS CAN V1.1.0, 0x1822xxxx broadcast, 250/500 kbit/s.
-# jbd: JBD CANBUS-compatible 11-bit RTR protocol, 500 kbit/s.
-# profile: kvms
-# profile: htbms
-# profile: jbd
+# Select exactly one profile and leave the other two commented out.
+# profile: kvms  # 心向阳 battery: DALY K-series 13S 100A, external KVMS CAN.
+# profile: htbms # Zhenyuan HTBMS V1.1.0, 0x1822xxxx active broadcast.
+# profile: jbd   # JBD CANBUS-compatible 0x100-0x110 RTR query protocol.
 
-# SocketCAN interface on this machine. The profile default is can5.
-# interface: can5
-
-# Only override this when the installed BMS has a configurable bitrate.
-# bitrate: 250000
+# interface: can5 # SocketCAN interface on this machine, such as can0 or can5.
+# bitrate: 250000 # Optional physical-rate override; otherwise use profile default.

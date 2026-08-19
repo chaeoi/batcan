@@ -24,8 +24,8 @@
 # Still unconfirmed: hardware/software variant, exact board type, chemistry
 # and interface topology.
 model:
-  id: kvms
-  bms_model: KVMS
+  id: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # Stable unique profile ID.
+  bms_model: KVMS # External battery-pack CAN protocol.
 
 can:
   bitrate: 250000

@@ -38,6 +38,8 @@ struct Property {
 };
 
 const std::regex kModelName("^[A-Za-z0-9._-]{1,64}$");
+const std::regex kModelId(
+    "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$");
 const std::regex kName("^[A-Za-z0-9_-]{1,64}$");
 const std::regex kYamlKey("^[A-Za-z][A-Za-z0-9_]*$");
 const std::regex kMetricName("^[A-Za-z][A-Za-z0-9_.-]{0,63}$");
@@ -506,10 +508,10 @@ Config parseModel(const embedded::Model &resource) {
                                 model, "model");
   validateKeys(model_map, {"id", "bms_model"}, model, "model");
   Config config;
-  config.model = requiredScalar(model_map, "id", model, "model");
-  requireModelName(config.model);
-  if (config.model != model) {
-    invalid(model, "model.id must match the configuration filename");
+  config.model = model;
+  config.model_id = requiredScalar(model_map, "id", model, "model");
+  if (!std::regex_match(config.model_id, kModelId)) {
+    invalid(model, "model.id must be a lowercase UUID");
   }
   config.bms_model =
       requiredScalar(model_map, "bms_model", model, "model");
@@ -712,10 +714,22 @@ Config parseModel(const embedded::Model &resource) {
   return config;
 }
 
+void validateEmbeddedModelIds() {
+  std::set<std::string> ids;
+  for (const auto &resource : embedded::kModels) {
+    const auto config = parseModel(resource);
+    if (!ids.insert(config.model_id).second) {
+      throw std::runtime_error("duplicate embedded model id " +
+                               config.model_id);
+    }
+  }
+}
+
 }  // namespace
 
 Config loadModel(const std::string &model) {
   requireModelName(model);
+  validateEmbeddedModelIds();
   auto profile = model;
   if (model == "2m_v0.1.2") {
     profile = "kvms";
@@ -733,11 +747,13 @@ Config loadModel(const std::string &model) {
 }
 
 std::vector<ModelInfo> supportedModels() {
+  validateEmbeddedModelIds();
   std::vector<ModelInfo> models;
   models.reserve(embedded::kModels.size());
   for (const auto &resource : embedded::kModels) {
     const auto config = parseModel(resource);
-    models.push_back(ModelInfo{config.model, config.bms_model});
+    models.push_back(
+        ModelInfo{config.model, config.model_id, config.bms_model});
   }
   return models;
 }

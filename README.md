@@ -56,6 +56,11 @@ profile: kvms
 interface: can5
 ```
 
+Each embedded YAML has a unique immutable UUID in `model.id`; the runtime
+configuration uses the shorter profile filename (`kvms`, `htbms`, or `jbd`).
+The generated config template annotates every selectable field with an inline
+remark, and the parser accepts those remarks when the file is edited.
+
 `interface` is the local SocketCAN interface name and therefore depends on the
 machine (`can0`, `can5`, and so on). The BMS profile controls bitrate by default.
 Use the optional runtime `bitrate` only when the same BMS protocol has been
