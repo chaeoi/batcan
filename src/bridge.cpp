@@ -361,6 +361,12 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
                   data.begin());
       try {
         const auto data_length = std::min<std::size_t>(frame.can_dlc, 8);
+        // JBD omits pages beyond the pack's configured cell count. An empty
+        // reply is a valid absence, rather than a malformed CRC frame.
+        if (data_length == 0) {
+          pending.erase(index);
+          break;
+        }
         if (!validateResponse(response, data, data_length)) {
           RCLCPP_WARN(get_logger(), "discarded response 0x%X with invalid CRC",
                       response.id);

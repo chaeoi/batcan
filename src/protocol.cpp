@@ -148,9 +148,12 @@ bool validateResponse(const ResponseConfig &response,
 void applyResponse(const ResponseConfig &response,
                    const std::array<std::uint8_t, 8> &data,
                    std::size_t data_length, BatterySample &sample) {
+  const auto payload_length =
+      response.crc16 && data_length >= 2 ? data_length - 2 : data_length;
   sample.present = true;
   auto raw_name = response.name;
-  if (response.sequence_stride != 0 && response.sequence_offset < data_length) {
+  if (response.sequence_stride != 0 &&
+      response.sequence_offset < payload_length) {
     raw_name += "." + std::to_string(data[response.sequence_offset]);
   }
   const auto raw_data =
@@ -158,7 +161,13 @@ void applyResponse(const ResponseConfig &response,
   sample.raw_frames[raw_name] = raw_data;
   sample.response_raw_frames[response.name][raw_name] = raw_data;
   for (const auto &field : response.fields) {
-    const auto raw = rawFieldValue(field, data, data_length);
+    // Some JBD pages are truncated at the configured cell count. Decode the
+    // fields that are present and leave the unavailable trailing fields out.
+    if (response.crc16 && field.offset + field.length > payload_length) {
+      continue;
+    }
+    const auto raw = rawFieldValue(
+        field, data, response.crc16 ? payload_length : data_length);
     if (invalidFieldValue(field, raw)) {
       continue;
     }

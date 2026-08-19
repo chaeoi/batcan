@@ -85,7 +85,7 @@ selected `profile`, `profile_id`, and `profile_mode` in the summary status:
 
 ```yaml
 profile: auto
-profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b558
+profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,d7a1d64a-6671-4ee2-8fbd-859043083a68
 interface: can5
 bitrate: auto
 ```

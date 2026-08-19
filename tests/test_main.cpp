@@ -104,7 +104,7 @@ void testDefaultConfig() {
   const auto auto_path = writeConfig(
       "profile: auto\n"
       "profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204, "
-      "fc3da911-07a0-42b3-8cb4-1aa8dd26b558\n"
+      "d7a1d64a-6671-4ee2-8fbd-859043083a68\n"
       "interface: can7\n"
       "bitrate: auto\n",
       "batcan-auto-test.yml");
@@ -288,6 +288,26 @@ void testCrc16Modbus() {
           "invalid Modbus CRC must be rejected");
 }
 
+void testPartialCrcResponse() {
+  batcan::ResponseConfig response;
+  response.name = "cell_voltage_13_15";
+  response.crc16 = true;
+  response.fields = {field("cell_voltage", 0, 2, "uint", "big", 0.001,
+                           0.0),
+                     field("cell_voltage", 2, 2, "uint", "big", 0.001,
+                           0.0)};
+  const std::array<std::uint8_t, 8> data = {
+      0x0E, 0xE2, 0x99, 0x85, 0, 0, 0, 0};
+  batcan::BatterySample sample;
+  require(batcan::validateResponse(response, data, 4),
+          "partial JBD response CRC must be accepted");
+  batcan::applyResponse(response, data, 4, sample);
+  require(sample.present, "partial JBD response must mark the sample present");
+  require(sample.cell_voltage.size() == 1 &&
+              std::abs(sample.cell_voltage[0] - 3.81) < 0.0001,
+          "partial JBD response must decode only its available cell");
+}
+
 }  // namespace
 
 int main() {
@@ -300,6 +320,7 @@ int main() {
     testSequenceDecode();
     testSignedLittleEndianDecode();
     testCrc16Modbus();
+    testPartialCrcResponse();
     std::cout << "all tests passed\n";
     return 0;
   } catch (const std::exception &error) {
