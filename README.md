@@ -1,73 +1,144 @@
 # batcan
 
-`batcan` reads BMS CAN traffic through SocketCAN and publishes every decoded
-response on one ROS 2 topic. It supports protocol profiles embedded into the
-binary, so target machines switch BMS only by editing a small runtime config.
+`batcan` 是一个运行在 ROS 2 Humble 上的 BMS 电池数据桥接节点。它通过 Linux
+SocketCAN 接口收发 CAN 帧，按照内置的 BMS 协议解析电压、电流、温度、SOC、容量、
+单体电压、故障和充放电状态，然后发布为 ROS 2 的诊断消息。
 
-## Single topic
+它适合把不同型号的 BMS 接入同一个 ROS 2 系统。安装后只需要修改一个运行时配置文件，
+即可切换协议和 CAN 接口。
 
-`/batcan/data` has type `diagnostic_msgs/msg/DiagnosticArray`.
+## 功能与特性
 
-Every message has an ordered `status[]` list:
+- 支持 KVMS、HTBMS CAN V1.1.0 和 JBD-compatible CANBUS 三种协议。
+- 支持 29 位扩展帧、11 位标准帧、主动查询、广播接收以及 JBD Modbus CRC-16 校验。
+- 自动配置 SocketCAN 接口和协议所需的 CAN 波特率。
+- 支持 `profile: auto` 自动探测 BMS；更换电池时可以不改程序，只调整候选列表。
+- 自动模式检测到有效响应后会选择对应协议；连续一段时间没有有效帧时会重新探测。
+- 一个 ROS 2 话题包含摘要和各类响应的完整解码结果，同时保留每个响应的原始 CAN 字节。
+- 单体电压、单体温度、故障页等分页数据会保留页码，便于订阅者按需读取。
+- 提供 ARM64 和 AMD64 Linux 发布包，可直接部署到目标机。
+- 通过 systemd 管理，支持开机启动、自动重启和日志查看。
 
-| Status name | Content |
+### 支持的协议
+
+| 配置名称 | BMS 协议 | CAN 特征 | 默认波特率 |
+| --- | --- | --- | ---: |
+| `kvms` | KVMS | 29 位扩展帧，主动发送查询 | 250000 |
+| `htbms` | HTBMS CAN V1.1.0 | 29 位扩展广播帧 | 500000 |
+| `jbd` | JBD-compatible CANBUS | 11 位标准帧，远程帧查询 | 500000 |
+
+每个协议都有一个固定 UUID。配置自动模式时使用 UUID 最可靠：
+
+| UUID | 协议 |
 | --- | --- |
-| `batcan/<profile>/summary` | Common pack values that were received: voltage, current, temperature, SOC, capacities and power-supply state |
-| `batcan/<profile>/<response>` | Every field decoded from one supported BMS response, plus `raw.<response>` hexadecimal CAN bytes |
+| `98b8d1c1-6a34-45a4-9687-e9a09ef20204` | KVMS |
+| `fc3da911-07a0-42b3-8cb4-1aa8dd26b558` | HTBMS |
+| `d7a1d64a-6671-4ee2-8fbd-859043083a68` | JBD |
 
-Repeated pages retain their page number in both metric and raw keys, for
-example `cell_voltage.1`, `cell_temperature.8`, `fault_page_byte.15`, and
-`raw.cell_voltages.1`. This makes a subscriber able to read only the response
-groups it needs while the topic still carries all supported data.
+## ROS 2 数据如何使用
 
-## BMS profiles
+节点发布单一话题：
 
-| Profile | BMS specification | CAN behavior | Default bitrate |
-| --- | --- | --- | --- |
-| `kvms` | KVMS | 29-bit extended CAN, actively sends `0x0400FF80`, big-endian response fields | 250 kbit/s |
-| `htbms` | HTBMS CAN V1.1.0 | 29-bit extended `0x1822xxxx` broadcast, little-endian fields | 500 kbit/s |
-| `jbd` | JBD-compatible CANBUS | 11-bit standard CAN, remote-frame queries `0x100` to `0x110`, big-endian Modbus CRC-16 responses | 500 kbit/s |
+```text
+/batcan/data
+```
 
-The three profiles are different protocols. In particular, HTBMS is neither
-the KVMS query protocol nor the 11-bit CANBUS remote-query protocol. HTBMS
-documents 250 kbit/s and 500 kbit/s selectable operation; its profile defaults
-to 500 kbit/s and may be overridden at deployment if the installed BMS is set
-to 250 kbit/s.
+消息类型为 `diagnostic_msgs/msg/DiagnosticArray`。`status[]` 中包含以下两类条目：
 
-`kvms` includes all observed and documented reply IDs `0x040080**` through
-`0x040E80**`: pack data, individual cell voltages and temperatures, pack and
-cell extrema, MOS and I/O state, capacities, charge information, limits, fault
-pages, and the documented-but-unassigned `0x040A80**`/`0x040C80**` bytes. The
-last two are emitted as individual byte values and raw frames until their BMS
-vendor definitions are available.
+- `batcan/<profile>/summary`：电压、电流、温度、SOC、容量和电源状态等常用摘要。
+- `batcan/<profile>/<response>`：某个 CAN 响应的全部解码字段，以及
+  `raw.<response>` 形式的原始字节。
 
-`jbd` queries all documented non-empty IDs from `0x100` through
-`0x110`: pack/capacity data, balance/protection/FET/version/count information,
-six NTC temperatures, and up to 30 cell voltages. It does not query `0x111` or
-`0x112`, which are blank in the supplied protocol document.
+分页数据会把页码写入字段名，例如 `cell_voltage.1`、`cell_temperature.8`、
+`fault_page_byte.15` 和 `raw.cell_voltages.1`。这样订阅者可以只读取需要的响应组。
 
-## Configuration
+查看话题和一条样例消息：
 
-The BMS profile documents live only in `models/bms.yml` in this repository.
-CMake embeds that file into the executable. On a target machine, edit only
-`/opt/batcan/config.yml`:
+```bash
+source /opt/ros/humble/setup.bash
+ros2 topic info /batcan/data -v
+ros2 topic echo /batcan/data --once
+```
+
+摘要中的 `profile_mode` 会显示 `manual` 或 `auto`，`profile` 和 `profile_id` 会
+显示当前实际使用的协议。
+
+## 部署
+
+目标机需要安装 ROS 2 Humble，并且已经有要使用的 SocketCAN 接口，例如 `can0` 或
+`can5`。项目提供 ARM64 和 AMD64 的 Linux 发布包。
+
+从 GitHub Releases 下载与目标机架构对应的文件，然后执行：
+
+```bash
+sudo install -m 0755 batcan-linux-arm64 /opt/batcan/batcan
+sudo /opt/batcan/batcan service install
+```
+
+AMD64 主机把文件名替换为 `batcan-linux-amd64`。
+
+`service install` 会完成服务安装，并尝试立即启动。它会自动创建：
+
+- `/opt/batcan/batcan`：可执行文件。
+- `/opt/batcan/config.yml`：运行时配置。
+- `/etc/systemd/system/batcan.service`：systemd 服务单元。
+
+第一次安装时，配置文件会自动生成一个带注释的模板，但模板中的配置项都是注释，
+不能直接启动服务。需要先编辑 `/opt/batcan/config.yml`，填写有效的 `profile` 和
+`interface`，再执行：
+
+```bash
+sudo /opt/batcan/batcan --check-config --config /opt/batcan/config.yml
+sudo systemctl enable --now batcan
+```
+
+服务默认以 `ubuntu` 用户运行。该用户需要能够访问 CAN 设备，通常应属于 `dialout`
+组；接口名称可以用下面的命令确认：
+
+```bash
+ip -brief link
+groups ubuntu
+```
+
+## 配置文件怎么写
+
+配置文件会在首次执行 `service install` 时自动生成；之后只修改目标机上的
+`/opt/batcan/config.yml`。配置文件是简单的 YAML，每行一个字段，行尾可以写注释。
+自动生成的是注释模板，必须取消注释并填写配置后才能启动。
+
+### 自动识别模式（推荐）
+
+```yaml
+profile: auto
+profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b558,d7a1d64a-6671-4ee2-8fbd-859043083a68
+interface: can5
+bitrate: auto
+```
+
+- `profile: auto`：启用自动探测。
+- `profiles`：逗号分隔的候选 UUID。已确定不会使用某种 BMS 时，可以删掉对应 UUID，
+  以减少探测时间。
+- `interface`：本机的 SocketCAN 接口名，例如 `can0` 或 `can5`。
+- `bitrate: auto`：每个候选使用其默认波特率。
+
+自动模式会独占配置的 CAN 接口；同一接口不要同时启动第二个 `batcan` 进程。如果
+同时有多个候选产生有效响应，程序不会猜测，应缩小 `profiles` 列表或改用手动模式。
+
+### 手动指定模式
+
+确定 BMS 型号后，可以填写 UUID，也可以填写兼容名称：
 
 ```yaml
 profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204
 interface: can5
 ```
 
-The repository contains one embedded `models/bms.yml` file with one YAML
-document per protocol. Each document has a unique immutable UUID in `model.id`;
-use that UUID in runtime configuration. The shorter names (`kvms`, `htbms`,
-`jbd`) remain accepted as compatibility selectors. The generated config template
-annotates every selectable field with an inline remark, and the parser accepts
-those remarks when the file is edited.
+兼容名称为 `kvms`、`htbms`、`jbd`。手动模式不需要 `profiles` 字段。
 
-`interface` is the local SocketCAN interface name and therefore depends on the
-machine (`can0`, `can5`, and so on). The BMS profile controls bitrate by default.
-Use the optional runtime `bitrate` only when the same BMS protocol has been
-configured to another supported physical rate, such as HTBMS at 250 kbit/s:
+### 波特率覆盖
+
+通常使用协议默认值即可。只有 BMS 实际配置与协议默认值不一致时才填写数字，例如
+HTBMS 使用 250 kbit/s：
 
 ```yaml
 profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558
@@ -75,52 +146,37 @@ interface: can0
 bitrate: 250000
 ```
 
-### Automatic profile selection
+`bitrate` 必须是正整数；自动模式下也可以填写固定数字，让所有候选使用同一个物理速率。
 
-When the battery can be changed without editing the deployed configuration,
-run one bridge process in automatic mode. The candidates are UUIDs from the
-embedded catalogue; the bridge tries each candidate's bitrate and protocol,
-locks the sole candidate that produces a valid response, and publishes the
-selected `profile`, `profile_id`, and `profile_mode` in the summary status:
+## 修改配置并检查运行状态
 
-```yaml
-profile: auto
-profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,d7a1d64a-6671-4ee2-8fbd-859043083a68
-interface: can5
-bitrate: auto
-```
-
-Do not start two bridge processes on the same CAN interface. Automatic mode
-owns the interface, probes one protocol at a time, and returns to detection
-after three consecutive cycles without a valid frame. If more than one
-candidate matches, the bridge does not guess; use an explicit UUID instead.
-
-For migration, `model: 2m_v0.1.2`, `profile: htbms_v1.1.0`, and
-`profile: canbus_500k` remain accepted as aliases. `profile: canbus` is also
-accepted for builds made during the rename. New configurations should use the
-immutable UUIDs shown above.
-
-Validate and start the installed service:
+修改配置后，先校验文件，再重启服务：
 
 ```bash
 sudo /opt/batcan/batcan --check-config --config /opt/batcan/config.yml
-sudo systemctl enable --now batcan
+sudo systemctl restart batcan
+systemctl status batcan --no-pager
+journalctl -u batcan -f
 ```
 
-## Build
-
-Source ROS 2 Humble and build the package from its workspace:
+服务启动后会自动把接口设为指定波特率并拉起；没有收到有效 CAN 帧时服务仍会保持运行
+并继续探测。查看当前接口状态：
 
 ```bash
-source /opt/ros/humble/setup.bash
-colcon build --packages-select batcan
+ip -details link show can5
 ```
 
-## Repository layout
+常用服务操作：
 
-```text
-models/     Embedded BMS protocol profiles
-doc/        Supplied BMS protocol documents
-src/        Generic SocketCAN, profile parsing and ROS publishing code
-tests/      Profile and protocol decoding tests
+```bash
+sudo systemctl enable batcan   # 开机启动
+sudo systemctl disable batcan  # 取消开机启动
+sudo systemctl stop batcan
+sudo systemctl start batcan
+```
+
+卸载 systemd 服务但保留 `/opt/batcan` 文件：
+
+```bash
+sudo /opt/batcan/batcan service uninstall
 ```
