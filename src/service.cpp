@@ -134,8 +134,8 @@ case "$(uname -m)" in
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-base_url=https://github.com/chaeoi/batcan/releases/latest/download
-proxy_base_url=https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download
+base_url=https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download
+proxy_base_url=https://github.com/chaeoi/batcan/releases/latest/download
 download_release() {
   local name="$1"
   local destination="$2"

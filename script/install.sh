@@ -33,8 +33,8 @@ cleanup() {
 trap cleanup EXIT
 
 release_bases=(
-  "${BATCAN_RELEASE_BASE_URL:-https://github.com/chaeoi/batcan/releases/latest/download}"
-  "https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download"
+  "${BATCAN_RELEASE_BASE_URL:-https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download}"
+  "https://github.com/chaeoi/batcan/releases/latest/download"
 )
 download_release() {
   local name="$1"
