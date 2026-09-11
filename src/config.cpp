@@ -83,7 +83,6 @@ Config loadConfig(const std::string &path) {
   std::string profile;
   std::string profiles;
   std::string interface;
-  std::string bitrate;
   std::string line;
   std::size_t line_number = 0;
   while (std::getline(input, line)) {
@@ -95,14 +94,14 @@ Config loadConfig(const std::string &path) {
     const auto separator = line.find(':');
     if (separator == std::string::npos) {
       throw std::runtime_error("config line " + std::to_string(line_number) +
-                               " must use profile: NAME");
+                               " must use profile: UUID");
     }
     const auto key = trim(line.substr(0, separator));
     auto value = trim(line.substr(separator + 1));
     if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
       value = value.substr(1, value.size() - 2);
     }
-    if (key == "model" || key == "profile") {
+    if (key == "profile") {
       if (!profile.empty()) {
         throw std::runtime_error("config only accepts one profile field");
       }
@@ -117,14 +116,9 @@ Config loadConfig(const std::string &path) {
         throw std::runtime_error("config only accepts one interface field");
       }
       interface = value;
-    } else if (key == "bitrate") {
-      if (!bitrate.empty()) {
-        throw std::runtime_error("config only accepts one bitrate field");
-      }
-      bitrate = value;
     } else {
       throw std::runtime_error(
-          "config accepts profile, profiles, interface and bitrate fields");
+          "config accepts profile, profiles and interface fields");
     }
   }
   if (profile.empty()) {
@@ -169,29 +163,12 @@ Config loadConfig(const std::string &path) {
     config.can.interface = interface;
     config.interface_override = true;
   }
-  if (!bitrate.empty()) {
-    std::size_t length = 0;
-    unsigned long value = 0;
-    if (bitrate == "auto") {
-      return config;
-    }
-    try {
-      value = std::stoul(bitrate, &length, 10);
-    } catch (const std::exception &) {
-      throw std::runtime_error("bitrate must be a positive integer");
-    }
-    if (length != bitrate.size() || value == 0 || value > 10000000UL) {
-      throw std::runtime_error("bitrate must be a positive integer");
-    }
-    config.can.bitrate = static_cast<int>(value);
-    config.bitrate_override = true;
-  }
   return config;
 }
 
 std::string defaultConfig() {
   std::string config =
-      "# Select one BMS profile and optionally override the CAN interface.\n";
+      "# Select one BMS profile UUID and optionally override the CAN interface.\n";
   for (const auto &model : supportedModels()) {
     config += "# profile: " + model.id + " # " + model.profile + ": " +
               model.bms_model + ".\n";
@@ -199,7 +176,6 @@ std::string defaultConfig() {
   config += "# profile: auto # Probe the candidate UUIDs below at startup.\n";
   config += "# profiles: UUID,UUID # Comma-separated candidate profile IDs.\n";
   config += "# interface: can5 # SocketCAN interface on this machine.\n";
-  config += "# bitrate: auto # Use each candidate's default; or set a fixed rate.\n";
   return config;
 }
 

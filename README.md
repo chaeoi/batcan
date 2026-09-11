@@ -68,24 +68,28 @@ ros2 topic echo /batcan/data --once
 目标机需要安装 ROS 2 Humble，并且已经有要使用的 SocketCAN 接口，例如 `can0` 或
 `can5`。项目提供 ARM64 和 AMD64 的 Linux 发布包。
 
-从 GitHub Releases 下载与目标机架构对应的文件，然后执行：
+从 GitHub Releases 下载与目标机架构对应的文件。下面以 ARM64 为例，直接创建目录、
+下载、授权，然后安装服务：
 
 ```bash
-sudo install -m 0755 batcan-linux-arm64 /opt/batcan/batcan
-sudo /opt/batcan/batcan service install
+sudo mkdir -p /opt/batcan
+cd /opt/batcan
+sudo wget -O batcan https://github.com/chaeoi/batcan/releases/latest/download/batcan-linux-arm64
+sudo chmod +x batcan
+sudo ./batcan service install
 ```
 
-AMD64 主机把文件名替换为 `batcan-linux-amd64`。
+AMD64 主机把下载地址中的 `batcan-linux-arm64` 改为 `batcan-linux-amd64`。
 
-`service install` 会完成服务安装，并尝试立即启动。它会自动创建：
+`service install` 会完成服务安装，并在配置有效时尝试立即启动。它会自动创建：
 
 - `/opt/batcan/batcan`：可执行文件。
 - `/opt/batcan/config.yml`：运行时配置。
 - `/etc/systemd/system/batcan.service`：systemd 服务单元。
 
-第一次安装时，配置文件会自动生成一个带注释的模板，但模板中的配置项都是注释，
-不能直接启动服务。需要先编辑 `/opt/batcan/config.yml`，填写有效的 `profile` 和
-`interface`，再执行：
+第一次安装时，`/opt/batcan/config.yml` 会自动生成一个带注释的模板；因为没有有效
+配置，服务不会启动。编辑该文件，填写有效的 `profile`、（自动模式下的）`profiles`
+和 `interface`，再执行：
 
 ```bash
 sudo /opt/batcan/batcan --check-config --config /opt/batcan/config.yml
@@ -112,41 +116,26 @@ groups ubuntu
 profile: auto
 profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b558,d7a1d64a-6671-4ee2-8fbd-859043083a68
 interface: can5
-bitrate: auto
 ```
 
 - `profile: auto`：启用自动探测。
 - `profiles`：逗号分隔的候选 UUID。已确定不会使用某种 BMS 时，可以删掉对应 UUID，
   以减少探测时间。
 - `interface`：本机的 SocketCAN 接口名，例如 `can0` 或 `can5`。
-- `bitrate: auto`：每个候选使用其默认波特率。
 
 自动模式会独占配置的 CAN 接口；同一接口不要同时启动第二个 `batcan` 进程。如果
 同时有多个候选产生有效响应，程序不会猜测，应缩小 `profiles` 列表或改用手动模式。
 
 ### 手动指定模式
 
-确定 BMS 型号后，可以填写 UUID，也可以填写兼容名称：
+确定 BMS 型号后，可以填写对应的 UUID：
 
 ```yaml
 profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204
 interface: can5
 ```
 
-兼容名称为 `kvms`、`htbms`、`jbd`。手动模式不需要 `profiles` 字段。
-
-### 波特率覆盖
-
-通常使用协议默认值即可。只有 BMS 实际配置与协议默认值不一致时才填写数字，例如
-HTBMS 使用 250 kbit/s：
-
-```yaml
-profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558
-interface: can0
-bitrate: 250000
-```
-
-`bitrate` 必须是正整数；自动模式下也可以填写固定数字，让所有候选使用同一个物理速率。
+手动模式不需要 `profiles` 字段。程序只接受规范 UUID，不接受协议名称或旧别名。
 
 ## 修改配置并检查运行状态
 
