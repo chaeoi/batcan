@@ -53,16 +53,16 @@ std::string trim(std::string value) {
   return value.substr(first, last - first + 1);
 }
 
-[[noreturn]] void invalid(const std::string &model,
-                          const std::string &detail) {
-  throw std::runtime_error("invalid model configuration " + model + ": " +
-                           detail);
-}
-
 void requireModelName(const std::string &model) {
   if (!std::regex_match(model, kModelName)) {
     throw std::runtime_error("model is invalid");
   }
+}
+
+[[noreturn]] void invalid(const std::string &model,
+                          const std::string &detail) {
+  throw std::runtime_error("invalid model configuration " + model + ": " +
+                           detail);
 }
 
 void requireName(const std::string &value, const std::string &model,
@@ -766,21 +766,15 @@ std::vector<Config> embeddedProfiles() {
 }  // namespace
 
 Config loadModel(const std::string &model) {
-  requireModelName(model);
-  auto profile = model;
-  if (model == "2m_v0.1.2") {
-    profile = "kvms";
-  } else if (model == "htbms_v1.1.0") {
-    profile = "htbms";
-  } else if (model == "canbus_500k" || model == "canbus") {
-    profile = "jbd";
+  if (!std::regex_match(model, kModelId)) {
+    throw std::runtime_error("BMS profile must be a canonical UUID");
   }
   for (const auto &config : embeddedProfiles()) {
-    if (config.model_id == profile || config.model == profile) {
+    if (config.model_id == model) {
       return config;
     }
   }
-  throw std::runtime_error("unsupported model " + profile);
+  throw std::runtime_error("unsupported BMS profile UUID " + model);
 }
 
 std::vector<ModelInfo> supportedModels() {

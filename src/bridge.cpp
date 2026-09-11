@@ -120,9 +120,6 @@ BatteryBridge::BatteryBridge(Config config)
       if (config_.interface_override) {
         candidate.can.interface = config_.can.interface;
       }
-      if (config_.bitrate_override) {
-        candidate.can.bitrate = config_.can.bitrate;
-      }
       candidate.ros = config_.ros;
       candidates_.push_back(std::move(candidate));
     }

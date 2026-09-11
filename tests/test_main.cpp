@@ -58,8 +58,8 @@ void testDefaultConfig() {
           "default config must list JBD profile");
   require(generated.find("# interface: can5 #") != std::string::npos,
           "default config must annotate interface");
-  require(generated.find("# bitrate: auto #") != std::string::npos,
-          "default config must annotate bitrate");
+  require(generated.find("bitrate") == std::string::npos,
+          "default config must not expose bitrate");
   const auto path = writeConfig(generated, "batcan-default-test.yml");
   bool selection_required = false;
   try {
@@ -92,21 +92,18 @@ void testDefaultConfig() {
 
   const auto commented_path = writeConfig(
       "profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # select the protocol\n"
-      "interface: can2 # machine-specific interface\n"
-      "bitrate: 250000 # explicit physical rate\n",
+      "interface: can2 # machine-specific interface\n",
       "batcan-inline-comments-test.yml");
   const auto commented = batcan::loadConfig(commented_path.string());
   std::filesystem::remove(commented_path);
-  require(commented.model == "kvms" && commented.can.interface == "can2" &&
-              commented.can.bitrate == 250000,
+  require(commented.model == "kvms" && commented.can.interface == "can2",
           "inline config comments must be ignored");
 
   const auto auto_path = writeConfig(
       "profile: auto\n"
       "profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204, "
       "d7a1d64a-6671-4ee2-8fbd-859043083a68\n"
-      "interface: can7\n"
-      "bitrate: auto\n",
+      "interface: can7\n",
       "batcan-auto-test.yml");
   const auto automatic = batcan::loadConfig(auto_path.string());
   std::filesystem::remove(auto_path);
@@ -118,8 +115,7 @@ void testDefaultConfig() {
   require(automatic.can.interface == "can7" &&
               automatic.can.bitrate == 250000,
           "auto profile must retain first candidate defaults");
-  require(automatic.interface_override && !automatic.bitrate_override,
-          "auto runtime overrides mismatch");
+  require(automatic.interface_override, "auto runtime interface override mismatch");
 
   const auto invalid_auto_path = writeConfig(
       "profile: auto\nprofiles: kvms\n", "batcan-invalid-auto-test.yml");
@@ -146,12 +142,6 @@ void testOtherProfiles() {
   require(htbms.can.queries[0].responses[0].id_mask == 0x1FFF0000U,
           "HTBMS ID mask mismatch");
 
-  const auto htbms_alias_path =
-      writeConfig("profile: htbms_v1.1.0\n", "batcan-htbms-alias-test.yml");
-  const auto htbms_alias = batcan::loadConfig(htbms_alias_path.string());
-  std::filesystem::remove(htbms_alias_path);
-  require(htbms_alias.model == "htbms", "HTBMS compatibility alias mismatch");
-
   const auto canbus_path = writeConfig(
       "profile: d7a1d64a-6671-4ee2-8fbd-859043083a68\n",
       "batcan-jbd-test.yml");
@@ -166,18 +156,28 @@ void testOtherProfiles() {
   require(canbus.can.queries.front().responses.front().crc16,
           "JBD responses must use CRC-16");
 
-  const auto canbus_alias_path =
-      writeConfig("profile: canbus_500k\n", "batcan-canbus-alias-test.yml");
-  const auto canbus_alias = batcan::loadConfig(canbus_alias_path.string());
-  std::filesystem::remove(canbus_alias_path);
-  require(canbus_alias.model == "jbd", "CANBUS compatibility alias mismatch");
-
-  const auto short_name_path =
+  const auto invalid_uuid_path =
       writeConfig("profile: kvms\n", "batcan-short-name-test.yml");
-  const auto short_name = batcan::loadConfig(short_name_path.string());
-  std::filesystem::remove(short_name_path);
-  require(short_name.model_id == "98b8d1c1-6a34-45a4-9687-e9a09ef20204",
-          "short profile compatibility selector mismatch");
+  bool invalid_uuid_rejected = false;
+  try {
+    (void)batcan::loadConfig(invalid_uuid_path.string());
+  } catch (const std::exception &) {
+    invalid_uuid_rejected = true;
+  }
+  std::filesystem::remove(invalid_uuid_path);
+  require(invalid_uuid_rejected, "profile must require a UUID");
+
+  const auto bitrate_path =
+      writeConfig("profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\nbitrate: 250000\n",
+                  "batcan-bitrate-runtime-test.yml");
+  bool bitrate_rejected = false;
+  try {
+    (void)batcan::loadConfig(bitrate_path.string());
+  } catch (const std::exception &) {
+    bitrate_rejected = true;
+  }
+  std::filesystem::remove(bitrate_path);
+  require(bitrate_rejected, "runtime config must not override bitrate");
 }
 
 void testUniqueModelIds() {
@@ -194,7 +194,7 @@ void testUniqueModelIds() {
 }
 
 void testRejectsInvalidRuntimeConfig() {
-  const auto path = writeConfig("profile: kvms\ncan:\n  interface: can0\n",
+  const auto path = writeConfig("profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\ncan:\n  interface: can0\n",
                                 "batcan-invalid-test.yml");
   bool rejected = false;
   try {
@@ -205,7 +205,7 @@ void testRejectsInvalidRuntimeConfig() {
   std::filesystem::remove(path);
   require(rejected, "nested runtime CAN configuration must be rejected");
 
-  const auto duplicate = writeConfig("profile: kvms\nprofile: htbms\n",
+  const auto duplicate = writeConfig("profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\nprofile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558\n",
                                      "batcan-duplicate-test.yml");
   rejected = false;
   try {
