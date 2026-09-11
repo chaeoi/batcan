@@ -23,6 +23,11 @@ constexpr const char *kInstalledBinary = "/opt/batcan/batcan";
 constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
+constexpr const char *kUpdateScriptPath = "/opt/batcan/update.sh";
+constexpr const char *kUpdateUnitPath =
+    "/etc/systemd/system/batcan-update.service";
+constexpr const char *kUpdateTimerPath =
+    "/etc/systemd/system/batcan-update.timer";
 constexpr const char *kLogDirectory = "/var/log/batcan";
 constexpr const char *kPrivateLogDirectory = "/var/log/private/batcan";
 constexpr const char *kServiceUser = "ubuntu";
@@ -110,6 +115,92 @@ std::string serviceUnit() {
          "[Install]\nWantedBy=multi-user.target\n";
 }
 
+std::string updateScript() {
+  return R"BATCAN(#!/bin/bash
+set -eu
+
+binary=/opt/batcan/batcan
+exec 9>/run/lock/batcan-update.lock
+flock -n 9 || exit 0
+temporary_directory="$(mktemp -d /tmp/batcan-update.XXXXXX)"
+cleanup() {
+  rm -rf "$temporary_directory"
+}
+trap cleanup EXIT
+
+case "$(uname -m)" in
+  aarch64|arm64) asset=batcan-linux-arm64 ;;
+  x86_64|amd64) asset=batcan-linux-amd64 ;;
+  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+esac
+
+base_url=https://github.com/chaeoi/batcan/releases/latest/download
+curl --fail --location --silent --show-error --retry 3 \
+  "$base_url/$asset" -o "$temporary_directory/batcan"
+curl --fail --location --silent --show-error --retry 3 \
+  "$base_url/SHA256SUMS" -o "$temporary_directory/SHA256SUMS"
+
+expected_hash="$(awk -v asset="$asset" '$2 == asset {print $1; exit}' \
+  "$temporary_directory/SHA256SUMS")"
+if [ -z "$expected_hash" ]; then
+  echo "release checksum is missing for $asset" >&2
+  exit 1
+fi
+actual_hash="$(sha256sum "$temporary_directory/batcan" | awk '{print $1}')"
+if [ "$expected_hash" != "$actual_hash" ]; then
+  echo "release checksum mismatch" >&2
+  exit 1
+fi
+
+new_version="$(chmod +x "$temporary_directory/batcan"; \
+  "$temporary_directory/batcan" --version)"
+current_hash=""
+if [ -f "$binary" ]; then
+  current_hash="$(sha256sum "$binary" | awk '{print $1}')"
+fi
+if [ "$current_hash" = "$expected_hash" ]; then
+  echo "batcan is up to date: $new_version"
+  exit 0
+fi
+
+install -m 0755 "$temporary_directory/batcan" "$binary.new"
+mv -f "$binary.new" "$binary"
+echo "updated batcan to $new_version"
+if systemctl is-active --quiet batcan.service; then
+  systemctl restart batcan.service
+fi
+)BATCAN";
+}
+
+std::string updateUnit() {
+  return "[Unit]\n"
+         "Description=Update batcan from GitHub Releases\n"
+         "After=network-online.target\n"
+         "Wants=network-online.target\n\n"
+         "[Service]\n"
+         "Type=oneshot\n"
+         "ExecStart=" + std::string(kUpdateScriptPath) + "\n";
+}
+
+std::string updateTimer() {
+  return "[Unit]\n"
+         "Description=Daily batcan update check\n\n"
+         "[Timer]\n"
+         "OnBootSec=10min\n"
+         "OnUnitActiveSec=24h\n"
+         "Persistent=true\n"
+         "RandomizedDelaySec=1h\n\n"
+         "[Install]\nWantedBy=timers.target\n";
+}
+
+void installUpdateArtifacts() {
+  writeFileAtomic(kUpdateScriptPath, updateScript(), 0755);
+  writeFileAtomic(kUpdateUnitPath, updateUnit(), 0644);
+  writeFileAtomic(kUpdateTimerPath, updateTimer(), 0644);
+  runCommand({"systemctl", "daemon-reload"});
+  runCommand({"systemctl", "enable", "--now", "batcan-update.timer"});
+}
+
 void installService(const std::vector<std::string> &arguments,
                     const std::string &executable_path) {
   requireRoot();
@@ -146,6 +237,7 @@ void installService(const std::vector<std::string> &arguments,
     std::filesystem::rename(temporary_binary, kInstalledBinary);
   }
   writeFileAtomic(kUnitPath, serviceUnit(), 0644);
+  installUpdateArtifacts();
   runCommand({"systemctl", "daemon-reload"});
   if (!valid_config) {
     runCommand({"systemctl", "disable", "--now", "batcan.service"}, true);
@@ -167,9 +259,15 @@ void uninstallService(const std::vector<std::string> &arguments) {
   }
   runCommand({"systemctl", "disable", "--now", "batcan.service"},
              true);
+  runCommand({"systemctl", "disable", "--now", "batcan-update.timer"},
+             true);
   std::filesystem::remove(kUnitPath);
+  std::filesystem::remove(kUpdateUnitPath);
+  std::filesystem::remove(kUpdateTimerPath);
+  std::filesystem::remove(kUpdateScriptPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
+  runCommand({"systemctl", "reset-failed", "batcan-update.service"}, true);
   std::filesystem::remove_all(kLogDirectory);
   std::filesystem::remove_all(kPrivateLogDirectory);
   std::cout << "uninstalled batcan.service; preserved " << kInstallDirectory
@@ -193,6 +291,14 @@ int serviceCommand(const std::vector<std::string> &arguments,
   if (arguments.front() == "uninstall") {
     uninstallService(options);
     return 0;
+  }
+  if (arguments.front() == "update") {
+    requireRoot();
+    if (!options.empty()) {
+      throw std::runtime_error("service update takes no options");
+    }
+    installUpdateArtifacts();
+    return runCommand({kUpdateScriptPath});
   }
   if (arguments.front() == "status") {
     if (!options.empty()) {

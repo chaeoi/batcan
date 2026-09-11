@@ -15,10 +15,6 @@
 #include "batcan/config.hpp"
 #include "batcan/service.hpp"
 
-#ifndef BATCAN_VERSION
-#define BATCAN_VERSION "dev"
-#endif
-
 namespace {
 
 std::string executablePath() {
@@ -35,6 +31,7 @@ void usage(std::ostream &stream) {
          << "  batcan run [--config PATH]\n"
          << "  batcan --check-config [--config PATH]\n"
          << "  batcan service install [--force-config]\n"
+         << "  batcan service update\n"
          << "  batcan service uninstall\n"
          << "  batcan service status\n"
          << "  batcan --version\n";

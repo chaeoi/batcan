@@ -1,5 +1,28 @@
 cmake_minimum_required(VERSION 3.16)
-project(batcan VERSION 0.1.0 LANGUAGES CXX)
+project(batcan LANGUAGES CXX)
+
+set(BATCAN_VERSION "" CACHE STRING "Runtime version shown by batcan")
+if(NOT BATCAN_VERSION)
+  set(BATCAN_COMMIT_DATE "")
+  execute_process(
+    COMMAND git log -1 --format=%cI
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE BATCAN_COMMIT_DATE
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(BATCAN_COMMIT_DATE)
+    execute_process(
+      COMMAND date -u -d "${BATCAN_COMMIT_DATE}" +%Y%m%d
+      OUTPUT_VARIABLE BATCAN_VERSION
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+      ERROR_QUIET)
+  endif()
+  if(NOT BATCAN_VERSION)
+    string(TIMESTAMP BATCAN_VERSION "%Y%m%d" UTC)
+  endif()
+  set(BATCAN_VERSION "${BATCAN_VERSION}" CACHE STRING
+      "Runtime version shown by batcan" FORCE)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -58,7 +81,7 @@ target_link_libraries(batcan batcan_core)
 ament_target_dependencies(batcan diagnostic_msgs rclcpp)
 target_link_options(batcan PRIVATE -Wl,--disable-new-dtags)
 target_compile_definitions(batcan PRIVATE
-  BATCAN_VERSION="${PROJECT_VERSION}")
+  BATCAN_VERSION="${BATCAN_VERSION}")
 target_compile_options(batcan PRIVATE -Wall -Wextra -Wpedantic -Werror)
 
 if(BUILD_TESTING)

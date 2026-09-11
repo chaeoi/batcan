@@ -395,6 +395,7 @@ void BatteryBridge::publish(const BatterySample &sample) {
   addText(status, "profile", config_.model);
   addText(status, "profile_id", config_.model_id);
   addText(status, "profile_mode", auto_config_.auto_detect ? "auto" : "manual");
+  addText(status, "version", std::string("batcan ") + BATCAN_VERSION);
   addOptionalValue(status, "voltage", sample.voltage);
   addOptionalValue(status, "current", sample.current);
   addOptionalValue(status, "temperature", sample.temperature);
