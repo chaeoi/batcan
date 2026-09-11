@@ -72,8 +72,8 @@ mv -f "$temporary_directory/batcan" "$binary"
 
 if [ ! -e "$install_directory/config.yml" ] && [ -n "${BATCAN_INTERFACE:-}" ]; then
   case "$BATCAN_INTERFACE" in
-    *[!a-zA-Z0-9_.:-]*)
-      echo "BATCAN_INTERFACE 只能包含字母、数字、下划线、点、冒号或短横线。" >&2
+    *[!a-zA-Z0-9_-]*)
+      echo "BATCAN_INTERFACE 只能包含字母、数字、下划线或短横线。" >&2
       exit 1
       ;;
   esac

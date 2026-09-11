@@ -83,7 +83,7 @@ curl -fsSL https://gitwarp.canghai.org/raw.githubusercontent.com/chaeoi/batcan/m
 
 ```bash
 curl -fsSL https://gitwarp.canghai.org/raw.githubusercontent.com/chaeoi/batcan/main/script/install.sh \
-  | sudo BATCAN_INTERFACE=can5 bash
+  | sudo env BATCAN_INTERFACE=can5 bash
 ```
 
 没有设置接口时，脚本会生成注释模板；编辑配置后执行：
