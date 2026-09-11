@@ -2,11 +2,14 @@
 #include <unistd.h>
 
 #include <cstdlib>
+#include <condition_variable>
 #include <filesystem>
 #include <iostream>
+#include <mutex>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <rclcpp/rclcpp.hpp>
@@ -85,7 +88,28 @@ int main(int argc, char **argv) {
     const auto domain = std::to_string(config.ros.domain_id);
     ::setenv("ROS_DOMAIN_ID", domain.c_str(), 1);
     rclcpp::init(0, nullptr);
-    rclcpp::spin(std::make_shared<batcan::BatteryBridge>(config));
+    auto node = std::make_shared<batcan::BatteryBridge>(config);
+    std::atomic_bool stopping = false;
+    std::condition_variable update_wake;
+    std::mutex update_mutex;
+    const auto installed_binary = std::filesystem::weakly_canonical(
+        "/opt/batcan/batcan");
+    const auto running_binary = std::filesystem::weakly_canonical(
+        executablePath());
+    const bool auto_update = ::geteuid() == 0 &&
+                             running_binary == installed_binary;
+    std::thread update_thread;
+    if (auto_update) {
+      update_thread = std::thread(batcan::automaticUpdateLoop,
+                                  std::ref(stopping), std::ref(update_wake),
+                                  std::ref(update_mutex));
+    }
+    rclcpp::spin(node);
+    stopping.store(true);
+    update_wake.notify_one();
+    if (update_thread.joinable()) {
+      update_thread.join();
+    }
     rclcpp::shutdown();
     return 0;
   } catch (const std::exception &error) {

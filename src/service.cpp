@@ -6,9 +6,12 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -24,14 +27,11 @@ constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
 constexpr const char *kUpdateScriptPath = "/opt/batcan/update.sh";
-constexpr const char *kUpdateUnitPath =
-    "/etc/systemd/system/batcan-update.service";
-constexpr const char *kUpdateTimerPath =
-    "/etc/systemd/system/batcan-update.timer";
 constexpr const char *kLogDirectory = "/var/log/batcan";
 constexpr const char *kPrivateLogDirectory = "/var/log/private/batcan";
-constexpr const char *kServiceUser = "ubuntu";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
+constexpr auto kInitialUpdateDelay = std::chrono::minutes(10);
+constexpr auto kUpdateInterval = std::chrono::hours(24);
 
 void requireRoot() {
   if (::geteuid() != 0) {
@@ -90,29 +90,25 @@ int runCommand(const std::vector<std::string> &arguments,
 }
 
 std::string serviceUnit() {
-  return "[Unit]\n"
-         "Description=CAN battery to ROS2 bridge\n"
-         "After=network-online.target\n"
-         "Wants=network-online.target\n\n"
-         "[Service]\n"
-         "Type=simple\n"
-         "User=" + std::string(kServiceUser) +
-         "\nGroup=" + kServiceUser +
-         "\nExecStart=/bin/bash -lc 'source " + kROSSetup +
-         " && exec /opt/batcan/batcan run --config " + kInstalledConfig +
-         "'\nRestart=always\nRestartSec=3\n"
-         "Environment=ROS_LOCALHOST_ONLY=1\n"
-         "Environment=ROS_LOG_DIR=/var/log/batcan/ros\n"
-         "LogsDirectory=batcan\nLogsDirectoryMode=0750\n"
-         "AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN\n"
-         "CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN\n"
-         "NoNewPrivileges=true\n"
-         "ProtectSystem=strict\nProtectHome=read-only\n"
-         "ReadOnlyPaths=/opt/batcan/config.yml\n"
-         "PrivateTmp=true\nProtectKernelTunables=true\n"
-         "ProtectControlGroups=true\nRestrictSUIDSGID=true\n"
-         "RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_CAN AF_INET AF_INET6\n\n"
-         "[Install]\nWantedBy=multi-user.target\n";
+  std::string unit =
+      "[Unit]\n"
+      "Description=CAN battery to ROS2 bridge\n"
+      "After=network-online.target\n"
+      "Wants=network-online.target\n\n"
+      "[Service]\n"
+      "Type=simple\n";
+  unit += "ExecStart=/bin/bash -lc 'source ";
+  unit += kROSSetup;
+  unit += " && exec /opt/batcan/batcan run --config ";
+  unit += kInstalledConfig;
+  unit +=
+      "'\nRestart=always\nRestartSec=3\n"
+      "Environment=ROS_LOCALHOST_ONLY=1\n"
+      "Environment=ROS_LOG_DIR=/var/log/batcan/ros\n"
+      "LogsDirectory=batcan\nLogsDirectoryMode=0750\n"
+      "RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_CAN AF_INET AF_INET6\n\n"
+      "[Install]\nWantedBy=multi-user.target\n";
+  return unit;
 }
 
 std::string updateScript() {
@@ -185,33 +181,8 @@ fi
 )BATCAN";
 }
 
-std::string updateUnit() {
-  return "[Unit]\n"
-         "Description=Update batcan from GitHub Releases\n"
-         "After=network-online.target\n"
-         "Wants=network-online.target\n\n"
-         "[Service]\n"
-         "Type=oneshot\n"
-         "ExecStart=" + std::string(kUpdateScriptPath) + "\n";
-}
-
-std::string updateTimer() {
-  return "[Unit]\n"
-         "Description=Daily batcan update check\n\n"
-         "[Timer]\n"
-         "OnBootSec=10min\n"
-         "OnUnitActiveSec=24h\n"
-         "Persistent=true\n"
-         "RandomizedDelaySec=1h\n\n"
-         "[Install]\nWantedBy=timers.target\n";
-}
-
-void installUpdateArtifacts() {
+void installUpdateScript() {
   writeFileAtomic(kUpdateScriptPath, updateScript(), 0755);
-  writeFileAtomic(kUpdateUnitPath, updateUnit(), 0644);
-  writeFileAtomic(kUpdateTimerPath, updateTimer(), 0644);
-  runCommand({"systemctl", "daemon-reload"});
-  runCommand({"systemctl", "enable", "--now", "batcan-update.timer"});
 }
 
 void installService(const std::vector<std::string> &arguments,
@@ -250,7 +221,7 @@ void installService(const std::vector<std::string> &arguments,
     std::filesystem::rename(temporary_binary, kInstalledBinary);
   }
   writeFileAtomic(kUnitPath, serviceUnit(), 0644);
-  installUpdateArtifacts();
+  installUpdateScript();
   runCommand({"systemctl", "daemon-reload"});
   if (!valid_config) {
     runCommand({"systemctl", "disable", "--now", "batcan.service"}, true);
@@ -272,15 +243,10 @@ void uninstallService(const std::vector<std::string> &arguments) {
   }
   runCommand({"systemctl", "disable", "--now", "batcan.service"},
              true);
-  runCommand({"systemctl", "disable", "--now", "batcan-update.timer"},
-             true);
   std::filesystem::remove(kUnitPath);
-  std::filesystem::remove(kUpdateUnitPath);
-  std::filesystem::remove(kUpdateTimerPath);
   std::filesystem::remove(kUpdateScriptPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
-  runCommand({"systemctl", "reset-failed", "batcan-update.service"}, true);
   std::filesystem::remove_all(kLogDirectory);
   std::filesystem::remove_all(kPrivateLogDirectory);
   std::cout << "uninstalled batcan.service; preserved " << kInstallDirectory
@@ -293,7 +259,7 @@ int serviceCommand(const std::vector<std::string> &arguments,
                    const std::string &executable_path) {
   if (arguments.empty()) {
     throw std::runtime_error(
-        "service requires install, uninstall or status");
+        "service requires install, update, uninstall or status");
   }
   const std::vector<std::string> options(arguments.begin() + 1,
                                          arguments.end());
@@ -310,7 +276,7 @@ int serviceCommand(const std::vector<std::string> &arguments,
     if (!options.empty()) {
       throw std::runtime_error("service update takes no options");
     }
-    installUpdateArtifacts();
+    installUpdateScript();
     return runCommand({kUpdateScriptPath});
   }
   if (arguments.front() == "status") {
@@ -321,6 +287,34 @@ int serviceCommand(const std::vector<std::string> &arguments,
                       true);
   }
   throw std::runtime_error("unknown service command: " + arguments.front());
+}
+
+void automaticUpdateLoop(std::atomic_bool &stopping,
+                         std::condition_variable &wake,
+                         std::mutex &wake_mutex) {
+  std::unique_lock lock(wake_mutex);
+  if (wake.wait_for(lock, kInitialUpdateDelay,
+                    [&stopping]() { return stopping.load(); })) {
+    return;
+  }
+  while (!stopping.load()) {
+    lock.unlock();
+    try {
+      const auto result = runCommand({kUpdateScriptPath}, true);
+      if (result != 0) {
+        std::cerr << "batcan automatic update exited with status "
+                  << result << '\n';
+      }
+    } catch (const std::exception &error) {
+      std::cerr << "batcan automatic update failed: " << error.what()
+                << '\n';
+    }
+    lock.lock();
+    if (wake.wait_for(lock, kUpdateInterval,
+                      [&stopping]() { return stopping.load(); })) {
+      return;
+    }
+  }
 }
 
 }  // namespace batcan
