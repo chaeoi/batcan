@@ -18,6 +18,7 @@ SocketCAN 接口收发 CAN 帧，按照内置的 BMS 协议解析电压、电流
 - 单体电压、单体温度、故障页等分页数据会保留页码，便于订阅者按需读取。
 - 提供 ARM64 和 AMD64 Linux 发布包，可直接部署到目标机。
 - 通过 systemd 管理，支持开机启动、自动重启和日志查看。
+- 安装后每天自动检查 GitHub Releases；校验通过且内容发生变化时自动更新并重启服务。
 
 ### 支持的协议
 
@@ -61,7 +62,7 @@ ros2 topic echo /batcan/data --once
 ```
 
 摘要中的 `profile_mode` 会显示 `manual` 或 `auto`，`profile` 和 `profile_id` 会
-显示当前实际使用的协议。
+显示当前实际使用的协议，`version` 会显示当前程序版本，例如 `batcan 20260911`。
 
 ## 部署
 
@@ -86,6 +87,8 @@ AMD64 主机把下载地址中的 `batcan-linux-arm64` 改为 `batcan-linux-amd6
 - `/opt/batcan/batcan`：可执行文件。
 - `/opt/batcan/config.yml`：运行时配置。
 - `/etc/systemd/system/batcan.service`：systemd 服务单元。
+- `/opt/batcan/update.sh`：自动更新脚本。
+- `batcan-update.timer`：每天执行一次更新检查。
 
 第一次安装时，`/opt/batcan/config.yml` 会自动生成一个带注释的模板；因为没有有效
 配置，服务不会启动。编辑该文件，填写有效的 `profile`、（自动模式下的）`profiles`
@@ -95,6 +98,16 @@ AMD64 主机把下载地址中的 `batcan-linux-arm64` 改为 `batcan-linux-amd6
 sudo /opt/batcan/batcan --check-config --config /opt/batcan/config.yml
 sudo systemctl enable --now batcan
 ```
+
+安装服务时会同时启用每日更新检查。也可以手动立即检查：
+
+```bash
+sudo /opt/batcan/batcan service update
+```
+
+更新器会下载当前架构的发布包，校验 `SHA256SUMS` 后再替换程序；校验失败或下载
+失败时会保留当前版本。由于发布版本按提交日期显示，同一天的多个提交由文件校验值
+区分，仍然可以自动更新到最新内容。
 
 服务默认以 `ubuntu` 用户运行。该用户需要能够访问 CAN 设备，通常应属于 `dialout`
 组；接口名称可以用下面的命令确认：
@@ -162,6 +175,8 @@ sudo systemctl enable batcan   # 开机启动
 sudo systemctl disable batcan  # 取消开机启动
 sudo systemctl stop batcan
 sudo systemctl start batcan
+sudo systemctl status batcan-update.timer
+sudo journalctl -u batcan-update.service -n 50 --no-pager
 ```
 
 卸载 systemd 服务但保留 `/opt/batcan` 文件：
