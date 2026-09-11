@@ -135,10 +135,23 @@ case "$(uname -m)" in
 esac
 
 base_url=https://github.com/chaeoi/batcan/releases/latest/download
-curl --fail --location --silent --show-error --retry 3 \
-  "$base_url/$asset" -o "$temporary_directory/batcan"
-curl --fail --location --silent --show-error --retry 3 \
-  "$base_url/SHA256SUMS" -o "$temporary_directory/SHA256SUMS"
+proxy_base_url=https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download
+download_release() {
+  local name="$1"
+  local destination="$2"
+  for base in "$base_url" "$proxy_base_url"; do
+    if curl --connect-timeout 8 --max-time 20 --fail --location \
+      --silent --show-error --retry 1 \
+      "$base/$name" -o "$destination"; then
+      return 0
+    fi
+    rm -f "$destination"
+  done
+  echo "cannot download release asset: $name" >&2
+  return 1
+}
+download_release "$asset" "$temporary_directory/batcan"
+download_release SHA256SUMS "$temporary_directory/SHA256SUMS"
 
 expected_hash="$(awk -v asset="$asset" '$2 == asset {print $1; exit}' \
   "$temporary_directory/SHA256SUMS")"

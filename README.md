@@ -69,6 +69,30 @@ ros2 topic echo /batcan/data --once
 目标机需要安装 ROS 2 Humble，并且已经有要使用的 SocketCAN 接口，例如 `can0` 或
 `can5`。项目提供 ARM64 和 AMD64 的 Linux 发布包。
 
+### 一键安装
+
+Ubuntu 主机可以直接运行下面的命令安装最新发布包：
+
+```bash
+curl -fsSL https://gitwarp.canghai.org/raw.githubusercontent.com/chaeoi/batcan/main/script/install.sh | sudo bash
+```
+
+脚本会自动识别 CPU 架构、下载并校验对应的发布包，然后安装 `batcan.service` 和每日
+更新检查。已有的 `/opt/batcan/config.yml` 会保留。首次安装时如果同时设置了
+`BATCAN_INTERFACE`，脚本会直接生成自动识别配置，例如：
+
+```bash
+curl -fsSL https://gitwarp.canghai.org/raw.githubusercontent.com/chaeoi/batcan/main/script/install.sh \
+  | sudo BATCAN_INTERFACE=can5 bash
+```
+
+没有设置接口时，脚本会生成注释模板；编辑配置后执行：
+
+```bash
+sudo /opt/batcan/batcan --check-config --config /opt/batcan/config.yml
+sudo systemctl enable --now batcan
+```
+
 从 GitHub Releases 下载与目标机架构对应的文件。下面以 ARM64 为例，直接创建目录、
 下载、授权，然后安装服务：
 
