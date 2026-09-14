@@ -132,13 +132,14 @@ esac
 
 base_url=https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download
 proxy_base_url=https://github.com/chaeoi/batcan/releases/latest/download
+cache_buster="$(date +%s)-$$"
 download_release() {
   local name="$1"
   local destination="$2"
   for base in "$base_url" "$proxy_base_url"; do
     if curl --connect-timeout 8 --max-time 20 --fail --location \
       --silent --show-error --retry 1 \
-      "$base/$name" -o "$destination"; then
+      "$base/$name?batcan_cache=$cache_buster" -o "$destination"; then
       return 0
     fi
     rm -f "$destination"
