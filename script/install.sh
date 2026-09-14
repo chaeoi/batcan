@@ -36,6 +36,7 @@ release_bases=(
   "${BATCAN_RELEASE_BASE_URL:-https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download}"
   "https://github.com/chaeoi/batcan/releases/latest/download"
 )
+cache_buster="$(date +%s)-$$"
 download_release() {
   local name="$1"
   local destination="$2"
@@ -43,7 +44,7 @@ download_release() {
   for base in "${release_bases[@]}"; do
     if curl --connect-timeout 8 --max-time 20 --fail --location \
       --silent --show-error --retry 1 \
-      "$base/$name" -o "$destination"; then
+      "$base/$name?batcan_cache=$cache_buster" -o "$destination"; then
       return 0
     fi
     rm -f "$destination"
