@@ -27,6 +27,10 @@ esac
 install_directory=/opt/batcan
 binary="$install_directory/batcan"
 temporary_directory="$(mktemp -d /tmp/batcan-install.XXXXXX)"
+config_preexisting=false
+if [ -e "$install_directory/config.yml" ]; then
+  config_preexisting=true
+fi
 cleanup() {
   rm -rf "$temporary_directory"
 }
@@ -92,8 +96,8 @@ fi
 echo "batcan 安装完成：$binary"
 if [ "$config_created" = true ]; then
   echo "已使用接口 $BATCAN_INTERFACE 生成自动识别配置。"
-elif [ -e "$install_directory/config.yml" ]; then
+elif [ "$config_preexisting" = true ]; then
   echo "已保留现有配置：$install_directory/config.yml"
 else
-  echo "请编辑 $install_directory/config.yml，填写 interface 和 profile 后启动服务。"
+  echo "已生成配置模板：请编辑 $install_directory/config.yml，填写 interface 和 profile 后启动服务。"
 fi
