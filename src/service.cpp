@@ -300,6 +300,7 @@ void automaticUpdateLoop(std::atomic_bool &stopping,
   while (!stopping.load()) {
     lock.unlock();
     try {
+      std::cerr << "batcan automatic update check\n";
       const auto result = runCommand({kUpdateScriptPath}, true);
       if (result != 0) {
         std::cerr << "batcan automatic update exited with status "
