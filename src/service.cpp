@@ -30,7 +30,7 @@ constexpr const char *kUpdateScriptPath = "/opt/batcan/update.sh";
 constexpr const char *kLogDirectory = "/var/log/batcan";
 constexpr const char *kPrivateLogDirectory = "/var/log/private/batcan";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
-constexpr auto kInitialUpdateDelay = std::chrono::minutes(10);
+constexpr auto kInitialUpdateDelay = std::chrono::seconds(30);
 constexpr auto kUpdateInterval = std::chrono::hours(24);
 
 void requireRoot() {
