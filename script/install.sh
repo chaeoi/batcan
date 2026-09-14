@@ -70,6 +70,7 @@ chmod 0755 "$temporary_directory/batcan"
 mkdir -p "$install_directory"
 mv -f "$temporary_directory/batcan" "$binary"
 
+config_created=false
 if [ ! -e "$install_directory/config.yml" ] && [ -n "${BATCAN_INTERFACE:-}" ]; then
   case "$BATCAN_INTERFACE" in
     *[!a-zA-Z0-9_-]*)
@@ -83,12 +84,15 @@ profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b
 interface: $BATCAN_INTERFACE
 EOF
   mv -f "$temporary_directory/config.yml" "$install_directory/config.yml"
+  config_created=true
 fi
 
 "$binary" service install
 echo "batcan 安装完成：$binary"
-if [ -n "${BATCAN_INTERFACE:-}" ]; then
+if [ "$config_created" = true ]; then
   echo "已使用接口 $BATCAN_INTERFACE 生成自动识别配置。"
+elif [ -e "$install_directory/config.yml" ]; then
+  echo "已保留现有配置：$install_directory/config.yml"
 else
   echo "请编辑 $install_directory/config.yml，填写 interface 和 profile 后启动服务。"
 fi

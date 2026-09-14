@@ -78,7 +78,8 @@ curl -fsSL https://gitwarp.canghai.org/raw.githubusercontent.com/chaeoi/batcan/m
 ```
 
 脚本会自动识别 CPU 架构、下载并校验对应的发布包，然后以 root 身份安装
-`batcan.service`。服务进程会在后台定期检查更新并自行替换程序。已有的
+`batcan.service`。服务进程会在启动 30 秒后开始检查更新，之后每 24 小时检查一次，并
+自行替换程序。已有的
 `/opt/batcan/config.yml` 会保留。首次安装时如果同时设置了
 `BATCAN_INTERFACE`，脚本会直接生成自动识别配置，例如：
 
