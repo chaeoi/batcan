@@ -96,7 +96,7 @@ sudo /opt/batcan/batcan service update
 # 查看服务状态
 batcan service status
 
-# 卸载 systemd 服务（保留 /opt/batcan 目录及配置）
+# 彻底卸载服务并清理全部程序、配置与日志痕迹
 sudo /opt/batcan/batcan service uninstall
 ```
 

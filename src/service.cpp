@@ -502,10 +502,11 @@ void uninstallService(const std::vector<std::string> &arguments) {
   std::filesystem::remove(kUnitPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
+  std::filesystem::remove("/run/lock/batcan-update.lock");
   std::filesystem::remove_all(kLogDirectory);
   std::filesystem::remove_all(kPrivateLogDirectory);
-  std::cout << "uninstalled batcan.service; preserved " << kInstallDirectory
-            << '\n';
+  std::filesystem::remove_all(kInstallDirectory);
+  std::cout << "已彻底卸载 batcan 服务并清理全部程序文件、配置与运行日志。\n";
 }
 
 }  // namespace
