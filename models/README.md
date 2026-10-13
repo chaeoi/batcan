@@ -33,7 +33,6 @@ capacity or enclosure style alone is not enough.
 
 The UUID is the only runtime profile selector. Short names and previous aliases
 are not accepted in the target-machine configuration.
-The reported DALY K-series BMS (13S, 100A) inside the 心向阳 battery is
-documented in the `kvms` header. J24K3 is only a candidate if it is the hardware
-variant; KVMS remains the profile name for the pack's externally observed CAN
-protocol.
+The reported DALY K-series BMS (13S, 100A) is documented in the `kvms` header.
+J24K3 is only a candidate if it is the hardware variant; KVMS remains the profile
+name for the pack's externally observed CAN protocol.

@@ -7,8 +7,7 @@
 # actively sends 0x0400FF80 and receives 0x040080** through 0x040E80** pages.
 # Response fields are big-endian.
 #
-# Installed battery information supplied by the battery vendor:
-#   - battery supplier/label: 心向阳
+# Installed battery information:
 #   - internal BMS: DALY (达锂) K series
 #   - installed configuration: 13S, 100A
 # DALY publishes both hardware and software K-series products covering 3-24S
