@@ -44,37 +44,40 @@ std::filesystem::path writeConfig(const std::string &contents,
 
 void testDefaultConfig() {
   const auto generated = batcan::defaultConfig();
+  require(generated.find("auto: enable") != std::string::npos,
+          "default config must enable auto mode");
   require(generated.find(
-              "# profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # kvms:") !=
+              "98b8d1c1-6a34-45a4-9687-e9a09ef20204 # kvms:") !=
               std::string::npos,
           "default config must list KVMS profile");
   require(generated.find(
-              "# profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558 # htbms:") !=
+              "fc3da911-07a0-42b3-8cb4-1aa8dd26b558 # htbms:") !=
               std::string::npos,
           "default config must list HTBMS profile");
   require(generated.find(
-              "# profile: d7a1d64a-6671-4ee2-8fbd-859043083a68 # jbd:") !=
+              "d7a1d64a-6671-4ee2-8fbd-859043083a68 # jbd:") !=
               std::string::npos,
           "default config must list JBD profile");
-  require(generated.find("# interface: can5 #") != std::string::npos,
-          "default config must annotate interface");
+  require(generated.find("interface: can5") != std::string::npos,
+          "default config must specify interface can5");
   require(generated.find("bitrate") == std::string::npos,
           "default config must not expose bitrate");
+
   const auto path = writeConfig(generated, "batcan-default-test.yml");
-  bool selection_required = false;
-  try {
-    (void)batcan::loadConfig(path.string());
-  } catch (const std::exception &) {
-    selection_required = true;
-  }
-  require(selection_required, "commented default config must require selection");
+  const auto default_loaded = batcan::loadConfig(path.string());
   std::filesystem::remove(path);
+  require(default_loaded.auto_detect, "default config must load as auto_detect");
+  require(default_loaded.auto_profiles.size() == 3,
+          "default config must have all 3 profiles enabled");
+  require(default_loaded.can.interface == "can5",
+          "default config interface must be can5");
 
   const auto kvms_path = writeConfig(
-      "profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\ninterface: can1\n",
+      "auto: disable\nprofile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\ninterface: can1\n",
       "batcan-kvms-test.yml");
   const auto config = batcan::loadConfig(kvms_path.string());
   std::filesystem::remove(kvms_path);
+  require(!config.auto_detect, "auto mode must be disabled");
   require(config.can.interface == "can1", "interface override mismatch");
   require(config.can.bitrate == 250000, "KVMS bitrate mismatch");
   require(config.can.queries.size() == 1, "KVMS query count mismatch");
@@ -91,6 +94,7 @@ void testDefaultConfig() {
   require(config.ros.topic == "/batcan/data", "single topic mismatch");
 
   const auto commented_path = writeConfig(
+      "auto: disable\n"
       "profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204 # select the protocol\n"
       "interface: can2 # machine-specific interface\n",
       "batcan-inline-comments-test.yml");
@@ -100,9 +104,10 @@ void testDefaultConfig() {
           "inline config comments must be ignored");
 
   const auto auto_path = writeConfig(
-      "profile: auto\n"
-      "profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204, "
-      "d7a1d64a-6671-4ee2-8fbd-859043083a68\n"
+      "auto: enable\n"
+      "profile:\n"
+      "  - 98b8d1c1-6a34-45a4-9687-e9a09ef20204\n"
+      "  - d7a1d64a-6671-4ee2-8fbd-859043083a68\n"
       "interface: can7\n",
       "batcan-auto-test.yml");
   const auto automatic = batcan::loadConfig(auto_path.string());
@@ -117,8 +122,40 @@ void testDefaultConfig() {
           "auto profile must retain first candidate defaults");
   require(automatic.interface_override, "auto runtime interface override mismatch");
 
+  // auto: disable with multiple profiles must fail
+  const auto multi_profile_disabled_path = writeConfig(
+      "auto: disable\n"
+      "profile:\n"
+      "  - 98b8d1c1-6a34-45a4-9687-e9a09ef20204\n"
+      "  - d7a1d64a-6671-4ee2-8fbd-859043083a68\n"
+      "interface: can5\n",
+      "batcan-multi-disable-test.yml");
+  bool multi_disable_rejected = false;
+  try {
+    (void)batcan::loadConfig(multi_profile_disabled_path.string());
+  } catch (const std::exception &) {
+    multi_disable_rejected = true;
+  }
+  std::filesystem::remove(multi_profile_disabled_path);
+  require(multi_disable_rejected,
+          "auto: disable must reject multiple profile UUIDs");
+
+  // auto values other than enable/disable must fail
+  const auto invalid_auto_bool_path = writeConfig(
+      "auto: true\nprofile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\n",
+      "batcan-invalid-auto-bool.yml");
+  bool invalid_auto_bool_rejected = false;
+  try {
+    (void)batcan::loadConfig(invalid_auto_bool_path.string());
+  } catch (const std::exception &) {
+    invalid_auto_bool_rejected = true;
+  }
+  std::filesystem::remove(invalid_auto_bool_path);
+  require(invalid_auto_bool_rejected,
+          "auto must only accept enable or disable");
+
   const auto invalid_auto_path = writeConfig(
-      "profile: auto\nprofiles: kvms\n", "batcan-invalid-auto-test.yml");
+      "auto: enable\nprofile: kvms\n", "batcan-invalid-auto-test.yml");
   bool invalid_auto_rejected = false;
   try {
     (void)batcan::loadConfig(invalid_auto_path.string());
@@ -132,10 +169,11 @@ void testDefaultConfig() {
 
 void testOtherProfiles() {
   const auto htbms_path = writeConfig(
-      "profile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558\n",
+      "auto: disable\nprofile: fc3da911-07a0-42b3-8cb4-1aa8dd26b558\ninterface: can0\n",
       "batcan-htbms-test.yml");
   const auto htbms = batcan::loadConfig(htbms_path.string());
   std::filesystem::remove(htbms_path);
+  require(htbms.can.interface == "can0", "HTBMS interface mismatch");
   require(htbms.can.bitrate == 500000, "HTBMS default bitrate mismatch");
   require(htbms.can.queries.size() == 1 && !htbms.can.queries[0].send_request,
           "HTBMS must use passive broadcast collection");
@@ -143,10 +181,11 @@ void testOtherProfiles() {
           "HTBMS ID mask mismatch");
 
   const auto canbus_path = writeConfig(
-      "profile: d7a1d64a-6671-4ee2-8fbd-859043083a68\n",
+      "auto: disable\nprofile: d7a1d64a-6671-4ee2-8fbd-859043083a68\ninterface: can3\n",
       "batcan-jbd-test.yml");
   const auto canbus = batcan::loadConfig(canbus_path.string());
   std::filesystem::remove(canbus_path);
+  require(canbus.can.interface == "can3", "JBD interface mismatch");
   require(canbus.can.queries.size() == 17,
           "JBD must query IDs 0x100 through 0x110");
   require(canbus.can.queries.front().request_remote,
@@ -156,8 +195,21 @@ void testOtherProfiles() {
   require(canbus.can.queries.front().responses.front().crc16,
           "JBD responses must use CRC-16");
 
+  // interface missing must fail
+  const auto missing_interface_path = writeConfig(
+      "auto: disable\nprofile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\n",
+      "batcan-missing-interface.yml");
+  bool missing_interface_rejected = false;
+  try {
+    (void)batcan::loadConfig(missing_interface_path.string());
+  } catch (const std::exception &) {
+    missing_interface_rejected = true;
+  }
+  std::filesystem::remove(missing_interface_path);
+  require(missing_interface_rejected, "interface must not be omitted");
+
   const auto invalid_uuid_path =
-      writeConfig("profile: kvms\n", "batcan-short-name-test.yml");
+      writeConfig("auto: disable\nprofile: kvms\ninterface: can0\n", "batcan-short-name-test.yml");
   bool invalid_uuid_rejected = false;
   try {
     (void)batcan::loadConfig(invalid_uuid_path.string());
@@ -168,7 +220,7 @@ void testOtherProfiles() {
   require(invalid_uuid_rejected, "profile must require a UUID");
 
   const auto bitrate_path =
-      writeConfig("profile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\nbitrate: 250000\n",
+      writeConfig("auto: disable\nprofile: 98b8d1c1-6a34-45a4-9687-e9a09ef20204\ninterface: can0\nbitrate: 250000\n",
                   "batcan-bitrate-runtime-test.yml");
   bool bitrate_rejected = false;
   try {

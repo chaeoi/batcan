@@ -1,7 +1,10 @@
 #include "batcan/service.hpp"
 
+#include <fcntl.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/utsname.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -10,8 +13,10 @@
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -26,7 +31,6 @@ constexpr const char *kInstalledBinary = "/opt/batcan/batcan";
 constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
-constexpr const char *kUpdateScriptPath = "/opt/batcan/update.sh";
 constexpr const char *kLogDirectory = "/var/log/batcan";
 constexpr const char *kPrivateLogDirectory = "/var/log/private/batcan";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
@@ -89,6 +93,48 @@ int runCommand(const std::vector<std::string> &arguments,
   return code;
 }
 
+std::string runCommandOutput(const std::vector<std::string> &arguments) {
+  int pipefd[2];
+  if (::pipe(pipefd) < 0) {
+    throw std::runtime_error("pipe failed");
+  }
+  const auto child = ::fork();
+  if (child < 0) {
+    ::close(pipefd[0]);
+    ::close(pipefd[1]);
+    throw std::runtime_error("fork failed");
+  }
+  if (child == 0) {
+    ::close(pipefd[0]);
+    ::dup2(pipefd[1], STDOUT_FILENO);
+    ::close(pipefd[1]);
+    std::vector<char *> values;
+    values.reserve(arguments.size() + 1);
+    for (const auto &argument : arguments) {
+      values.push_back(const_cast<char *>(argument.c_str()));
+    }
+    values.push_back(nullptr);
+    ::execvp(values[0], values.data());
+    _exit(127);
+  }
+  ::close(pipefd[1]);
+  std::string output;
+  char buffer[4096];
+  ssize_t bytes = 0;
+  while ((bytes = ::read(pipefd[0], buffer, sizeof(buffer))) > 0) {
+    output.append(buffer, bytes);
+  }
+  ::close(pipefd[0]);
+  int status = 0;
+  ::waitpid(child, &status, 0);
+  const auto code = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
+  if (code != 0) {
+    throw std::runtime_error(arguments.front() + " exited with status " +
+                             std::to_string(code));
+  }
+  return output;
+}
+
 std::string serviceUnit() {
   std::string unit =
       "[Unit]\n"
@@ -111,79 +157,285 @@ std::string serviceUnit() {
   return unit;
 }
 
-std::string updateScript() {
-  return R"BATCAN(#!/bin/bash
-set -eu
+namespace sha256 {
 
-binary=/opt/batcan/batcan
-exec 9>/run/lock/batcan-update.lock
-flock -n 9 || exit 0
-temporary_directory="$(mktemp -d /tmp/batcan-update.XXXXXX)"
-cleanup() {
-  rm -rf "$temporary_directory"
+inline uint32_t rotr(uint32_t x, uint32_t n) { return (x >> n) | (x << (32 - n)); }
+inline uint32_t ch(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (~x & z); }
+inline uint32_t maj(uint32_t x, uint32_t y, uint32_t z) { return (x & y) ^ (x & z) ^ (y & z); }
+inline uint32_t sig0(uint32_t x) { return rotr(x, 2) ^ rotr(x, 13) ^ rotr(x, 22); }
+inline uint32_t sig1(uint32_t x) { return rotr(x, 6) ^ rotr(x, 11) ^ rotr(x, 25); }
+inline uint32_t theta0(uint32_t x) { return rotr(x, 7) ^ rotr(x, 18) ^ (x >> 3); }
+inline uint32_t theta1(uint32_t x) { return rotr(x, 17) ^ rotr(x, 19) ^ (x >> 10); }
+
+const uint32_t K[64] = {
+  0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+  0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+  0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+  0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+  0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+  0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+  0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+  0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+};
+
+std::string fileSha256(const std::string &path) {
+  std::ifstream stream(path, std::ios::binary);
+  if (!stream) {
+    return "";
+  }
+  uint32_t h[8] = {
+    0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+  };
+  std::vector<uint8_t> buffer(64);
+  uint64_t total_bytes = 0;
+  while (stream) {
+    stream.read(reinterpret_cast<char*>(buffer.data()), 64);
+    const auto count = stream.gcount();
+    if (count == 64) {
+      total_bytes += 64;
+      uint32_t w[64];
+      for (int i = 0; i < 16; ++i) {
+        w[i] = (static_cast<uint32_t>(buffer[i * 4]) << 24) |
+               (static_cast<uint32_t>(buffer[i * 4 + 1]) << 16) |
+               (static_cast<uint32_t>(buffer[i * 4 + 2]) << 8) |
+               (static_cast<uint32_t>(buffer[i * 4 + 3]));
+      }
+      for (int i = 16; i < 64; ++i) {
+        w[i] = theta1(w[i - 2]) + w[i - 7] + theta0(w[i - 15]) + w[i - 16];
+      }
+      uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+      uint32_t e = h[4], f = h[5], g = h[6], h_val = h[7];
+      for (int i = 0; i < 64; ++i) {
+        uint32_t t1 = h_val + sig1(e) + ch(e, f, g) + K[i] + w[i];
+        uint32_t t2 = sig0(a) + maj(a, b, c);
+        h_val = g; g = f; f = e; e = d + t1;
+        d = c; c = b; b = a; a = t1 + t2;
+      }
+      h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+      h[4] += e; h[5] += f; h[6] += g; h[7] += h_val;
+    } else {
+      total_bytes += static_cast<uint64_t>(count);
+      buffer[count] = 0x80;
+      size_t pad_len = count + 1;
+      if (pad_len > 56) {
+        std::fill(buffer.begin() + pad_len, buffer.end(), 0);
+        uint32_t w[64];
+        for (int i = 0; i < 16; ++i) {
+          w[i] = (static_cast<uint32_t>(buffer[i * 4]) << 24) |
+                 (static_cast<uint32_t>(buffer[i * 4 + 1]) << 16) |
+                 (static_cast<uint32_t>(buffer[i * 4 + 2]) << 8) |
+                 (static_cast<uint32_t>(buffer[i * 4 + 3]));
+        }
+        for (int i = 16; i < 64; ++i) {
+          w[i] = theta1(w[i - 2]) + w[i - 7] + theta0(w[i - 15]) + w[i - 16];
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+        uint32_t e = h[4], f = h[5], g = h[6], h_val = h[7];
+        for (int i = 0; i < 64; ++i) {
+          uint32_t t1 = h_val + sig1(e) + ch(e, f, g) + K[i] + w[i];
+          uint32_t t2 = sig0(a) + maj(a, b, c);
+          h_val = g; g = f; f = e; e = d + t1;
+          d = c; c = b; b = a; a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+        h[4] += e; h[5] += f; h[6] += g; h[7] += h_val;
+        pad_len = 0;
+      }
+      std::fill(buffer.begin() + pad_len, buffer.end(), 0);
+      uint64_t bit_len = total_bytes * 8;
+      for (int i = 0; i < 8; ++i) {
+        buffer[63 - i] = static_cast<uint8_t>((bit_len >> (i * 8)) & 0xff);
+      }
+      uint32_t w[64];
+      for (int i = 0; i < 16; ++i) {
+        w[i] = (static_cast<uint32_t>(buffer[i * 4]) << 24) |
+               (static_cast<uint32_t>(buffer[i * 4 + 1]) << 16) |
+               (static_cast<uint32_t>(buffer[i * 4 + 2]) << 8) |
+               (static_cast<uint32_t>(buffer[i * 4 + 3]));
+      }
+      for (int i = 16; i < 64; ++i) {
+        w[i] = theta1(w[i - 2]) + w[i - 7] + theta0(w[i - 15]) + w[i - 16];
+      }
+      uint32_t a = h[0], b = h[1], c = h[2], d = h[3];
+      uint32_t e = h[4], f = h[5], g = h[6], h_val = h[7];
+      for (int i = 0; i < 64; ++i) {
+        uint32_t t1 = h_val + sig1(e) + ch(e, f, g) + K[i] + w[i];
+        uint32_t t2 = sig0(a) + maj(a, b, c);
+        h_val = g; g = f; f = e; e = d + t1;
+        d = c; c = b; b = a; a = t1 + t2;
+      }
+      h[0] += a; h[1] += b; h[2] += c; h[3] += d;
+      h[4] += e; h[5] += f; h[6] += g; h[7] += h_val;
+      break;
+    }
+  }
+  std::ostringstream oss;
+  for (int i = 0; i < 8; ++i) {
+    oss << std::hex << std::setw(8) << std::setfill('0') << h[i];
+  }
+  return oss.str();
 }
-trap cleanup EXIT
 
-case "$(uname -m)" in
-  aarch64|arm64) asset=batcan-linux-arm64 ;;
-  x86_64|amd64) asset=batcan-linux-amd64 ;;
-  *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-esac
+}  // namespace sha256
 
-base_url=https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download
-proxy_base_url=https://github.com/chaeoi/batcan/releases/latest/download
-cache_buster="$(date +%s)-$$"
-download_release() {
-  local name="$1"
-  local destination="$2"
-  for base in "$base_url" "$proxy_base_url"; do
-    if curl --connect-timeout 8 --max-time 20 --fail --location \
-      --silent --show-error --retry 1 \
-      "$base/$name?batcan_cache=$cache_buster" -o "$destination"; then
-      return 0
-    fi
-    rm -f "$destination"
-  done
-  echo "cannot download release asset: $name" >&2
-  return 1
-}
-download_release "$asset" "$temporary_directory/batcan"
-download_release SHA256SUMS "$temporary_directory/SHA256SUMS"
-
-expected_hash="$(awk -v asset="$asset" '$2 == asset {print $1; exit}' \
-  "$temporary_directory/SHA256SUMS")"
-if [ -z "$expected_hash" ]; then
-  echo "release checksum is missing for $asset" >&2
-  exit 1
-fi
-actual_hash="$(sha256sum "$temporary_directory/batcan" | awk '{print $1}')"
-if [ "$expected_hash" != "$actual_hash" ]; then
-  echo "release checksum mismatch" >&2
-  exit 1
-fi
-
-new_version="$(chmod +x "$temporary_directory/batcan"; \
-  "$temporary_directory/batcan" --version)"
-current_hash=""
-if [ -f "$binary" ]; then
-  current_hash="$(sha256sum "$binary" | awk '{print $1}')"
-fi
-if [ "$current_hash" = "$expected_hash" ]; then
-  echo "batcan is up to date: $new_version"
-  exit 0
-fi
-
-install -m 0755 "$temporary_directory/batcan" "$binary.new"
-mv -f "$binary.new" "$binary"
-echo "updated batcan to $new_version"
-if systemctl is-active --quiet batcan.service; then
-  systemctl restart batcan.service
-fi
-)BATCAN";
+std::string getArchitectureAsset() {
+  struct utsname uts;
+  if (::uname(&uts) < 0) {
+    throw std::runtime_error("uname failed");
+  }
+  const std::string machine = uts.machine;
+  if (machine == "aarch64" || machine == "arm64") {
+    return "batcan-linux-arm64";
+  }
+  if (machine == "x86_64" || machine == "amd64") {
+    return "batcan-linux-amd64";
+  }
+  throw std::runtime_error("unsupported architecture: " + machine);
 }
 
-void installUpdateScript() {
-  writeFileAtomic(kUpdateScriptPath, updateScript(), 0755);
+std::string extractExpectedHash(const std::string &sha256sums_content,
+                                const std::string &asset_name) {
+  std::istringstream stream(sha256sums_content);
+  std::string line;
+  while (std::getline(stream, line)) {
+    std::istringstream line_stream(line);
+    std::string hash;
+    std::string name;
+    if (line_stream >> hash >> name) {
+      if (!name.empty() && name.front() == '*') {
+        name = name.substr(1);
+      }
+      if (name == asset_name) {
+        return hash;
+      }
+    }
+  }
+  return "";
+}
+
+bool downloadReleaseFile(const std::string &name,
+                         const std::string &destination,
+                         const std::string &cache_buster) {
+  const std::vector<std::string> base_urls = {
+      "https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download",
+      "https://github.com/chaeoi/batcan/releases/latest/download"};
+
+  for (const auto &base : base_urls) {
+    const std::string url = base + "/" + name + "?batcan_cache=" + cache_buster;
+    const std::vector<std::string> cmd = {
+        "curl", "--connect-timeout", "8", "--max-time", "20", "--fail",
+        "--location", "--silent", "--show-error", "--retry", "1",
+        url, "-o", destination};
+    if (runCommand(cmd, true) == 0) {
+      return true;
+    }
+    std::filesystem::remove(destination);
+  }
+  return false;
+}
+
+int performUpdate() {
+  int lock_fd = ::open("/run/lock/batcan-update.lock", O_CREAT | O_RDWR, 0600);
+  if (lock_fd >= 0) {
+    if (::flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+      ::close(lock_fd);
+      return 0;
+    }
+  }
+
+  struct LockGuard {
+    int fd;
+    ~LockGuard() {
+      if (fd >= 0) {
+        ::flock(fd, LOCK_UN);
+        ::close(fd);
+      }
+    }
+  } lock_guard{lock_fd};
+
+  std::string temp_dir_template =
+      (std::filesystem::temp_directory_path() / "batcan-update.XXXXXX").string();
+  char *temp_dir_c = ::mkdtemp(temp_dir_template.data());
+  if (!temp_dir_c) {
+    throw std::runtime_error("cannot create temporary directory for update");
+  }
+  const std::filesystem::path temp_dir(temp_dir_c);
+
+  struct TempDirGuard {
+    std::filesystem::path path;
+    ~TempDirGuard() {
+      std::error_code ec;
+      std::filesystem::remove_all(path, ec);
+    }
+  } temp_dir_guard{temp_dir};
+
+  const auto asset = getArchitectureAsset();
+  const auto now = std::chrono::system_clock::now().time_since_epoch().count();
+  const std::string cache_buster =
+      std::to_string(now) + "-" + std::to_string(::getpid());
+
+  const auto downloaded_binary = (temp_dir / "batcan").string();
+  const auto downloaded_sums = (temp_dir / "SHA256SUMS").string();
+
+  if (!downloadReleaseFile(asset, downloaded_binary, cache_buster)) {
+    throw std::runtime_error("cannot download release asset: " + asset);
+  }
+  if (!downloadReleaseFile("SHA256SUMS", downloaded_sums, cache_buster)) {
+    throw std::runtime_error("cannot download release checksums (SHA256SUMS)");
+  }
+
+  std::ifstream sums_file(downloaded_sums);
+  if (!sums_file) {
+    throw std::runtime_error("cannot open downloaded SHA256SUMS");
+  }
+  std::stringstream sums_buffer;
+  sums_buffer << sums_file.rdbuf();
+  const auto expected_hash =
+      extractExpectedHash(sums_buffer.str(), asset);
+  if (expected_hash.empty()) {
+    throw std::runtime_error("release checksum is missing for " + asset);
+  }
+
+  const auto actual_hash = sha256::fileSha256(downloaded_binary);
+  if (actual_hash != expected_hash) {
+    throw std::runtime_error("release checksum mismatch");
+  }
+
+  ::chmod(downloaded_binary.c_str(), 0755);
+  std::string new_version;
+  try {
+    new_version = runCommandOutput({downloaded_binary, "--version"});
+    while (!new_version.empty() &&
+           (new_version.back() == '\n' || new_version.back() == '\r')) {
+      new_version.pop_back();
+    }
+  } catch (const std::exception &e) {
+    new_version = "unknown";
+  }
+
+  std::string current_hash;
+  if (std::filesystem::exists(kInstalledBinary)) {
+    current_hash = sha256::fileSha256(kInstalledBinary);
+  }
+
+  if (!current_hash.empty() && current_hash == expected_hash) {
+    std::cout << "batcan is up to date: " << new_version << '\n';
+    return 0;
+  }
+
+  const std::string binary_new = std::string(kInstalledBinary) + ".new";
+  std::filesystem::copy_file(downloaded_binary, binary_new,
+                             std::filesystem::copy_options::overwrite_existing);
+  ::chmod(binary_new.c_str(), 0755);
+  std::filesystem::rename(binary_new, kInstalledBinary);
+
+  std::cout << "updated batcan to " << new_version << '\n';
+
+  if (runCommand({"systemctl", "is-active", "--quiet", "batcan.service"}, true) == 0) {
+    runCommand({"systemctl", "restart", "batcan.service"}, true);
+  }
+  return 0;
 }
 
 void installService(const std::vector<std::string> &arguments,
@@ -222,7 +474,6 @@ void installService(const std::vector<std::string> &arguments,
     std::filesystem::rename(temporary_binary, kInstalledBinary);
   }
   writeFileAtomic(kUnitPath, serviceUnit(), 0644);
-  installUpdateScript();
   runCommand({"systemctl", "daemon-reload"});
   if (!valid_config) {
     runCommand({"systemctl", "disable", "--now", "batcan.service"}, true);
@@ -235,6 +486,10 @@ void installService(const std::vector<std::string> &arguments,
   runCommand({"systemctl", "restart", "batcan.service"});
   std::cout << "installed and started batcan.service with config "
             << kInstalledConfig << '\n';
+  std::cout << "\n提示：\n"
+            << "1. 配置文件已生成于: " << kInstalledConfig << "（默认开启 auto 自动探测全部协议）。\n"
+            << "2. 默认 CAN 接口为 can5，如实际接口不同请修改 interface。\n"
+            << "3. profile 列表中已包含所有支持的 BMS UUID，可直接删除不需要探测的 UUID。\n\n";
 }
 
 void uninstallService(const std::vector<std::string> &arguments) {
@@ -245,7 +500,6 @@ void uninstallService(const std::vector<std::string> &arguments) {
   runCommand({"systemctl", "disable", "--now", "batcan.service"},
              true);
   std::filesystem::remove(kUnitPath);
-  std::filesystem::remove(kUpdateScriptPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
   std::filesystem::remove_all(kLogDirectory);
@@ -277,8 +531,7 @@ int serviceCommand(const std::vector<std::string> &arguments,
     if (!options.empty()) {
       throw std::runtime_error("service update takes no options");
     }
-    installUpdateScript();
-    return runCommand({kUpdateScriptPath});
+    return performUpdate();
   }
   if (arguments.front() == "status") {
     if (!options.empty()) {
@@ -302,7 +555,7 @@ void automaticUpdateLoop(std::atomic_bool &stopping,
     lock.unlock();
     try {
       std::cerr << "batcan automatic update check started\n";
-      const auto result = runCommand({kUpdateScriptPath}, true);
+      const auto result = performUpdate();
       if (result != 0) {
         std::cerr << "batcan automatic update exited with status "
                   << result << '\n';

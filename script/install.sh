@@ -76,28 +76,28 @@ mkdir -p "$install_directory"
 mv -f "$temporary_directory/batcan" "$binary"
 
 config_created=false
-if [ ! -e "$install_directory/config.yml" ] && [ -n "${BATCAN_INTERFACE:-}" ]; then
-  case "$BATCAN_INTERFACE" in
+if [ ! -e "$install_directory/config.yml" ]; then
+  # 优先采用传入的 BATCAN_INTERFACE，否则使用默认值 can5
+  selected_interface="${BATCAN_INTERFACE:-can5}"
+  case "$selected_interface" in
     *[!a-zA-Z0-9_-]*)
       echo "BATCAN_INTERFACE 只能包含字母、数字、下划线或短横线。" >&2
       exit 1
       ;;
   esac
-  cat > "$temporary_directory/config.yml" <<EOF
-profile: auto
-profiles: 98b8d1c1-6a34-45a4-9687-e9a09ef20204,fc3da911-07a0-42b3-8cb4-1aa8dd26b558,d7a1d64a-6671-4ee2-8fbd-859043083a68
-interface: $BATCAN_INTERFACE
-EOF
-  mv -f "$temporary_directory/config.yml" "$install_directory/config.yml"
+  # 运行二进制输出默认全开的 auto 配置
+  "$binary" service install --force-config >/dev/null 2>&1 || true
+  if [ -n "${BATCAN_INTERFACE:-}" ] && [ -f "$install_directory/config.yml" ]; then
+    sed -i "s/^interface:.*/interface: $selected_interface/" "$install_directory/config.yml"
+  fi
   config_created=true
 fi
 
 "$binary" service install
 echo "batcan 安装完成：$binary"
 if [ "$config_created" = true ]; then
-  echo "已使用接口 $BATCAN_INTERFACE 生成自动识别配置。"
+  echo "已生成默认配置（开启 auto 自动探测全部协议，默认接口：${selected_interface}）：$install_directory/config.yml"
+  echo "提示：请根据实际设备检查并修改 interface 接口名称，若不需要探测部分 BMS，直接在 profile 列表中删除对应 UUID 行即可。"
 elif [ "$config_preexisting" = true ]; then
   echo "已保留现有配置：$install_directory/config.yml"
-else
-  echo "已生成配置模板：请编辑 $install_directory/config.yml，填写 interface 和 profile 后启动服务。"
 fi
