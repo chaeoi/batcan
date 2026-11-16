@@ -33,6 +33,7 @@ void usage(std::ostream &stream) {
   stream << "Usage:\n"
          << "  batcan run [--config PATH]\n"
          << "  batcan --check-config [--config PATH]\n"
+         << "  batcan --print-default-config\n"
          << "  batcan service install [--force-config]\n"
          << "  batcan service update\n"
          << "  batcan service uninstall\n"
@@ -55,6 +56,10 @@ int main(int argc, char **argv) {
     }
     if (!arguments.empty() && arguments.front() == "--version") {
       std::cout << BATCAN_VERSION << '\n';
+      return 0;
+    }
+    if (arguments.size() == 1 && arguments.front() == "--print-default-config") {
+      std::cout << batcan::defaultConfig();
       return 0;
     }
     if (!arguments.empty() &&
@@ -84,7 +89,13 @@ int main(int argc, char **argv) {
       return 0;
     }
 
-    ::setenv("ROS_LOCALHOST_ONLY", config.ros.localhost_only ? "1" : "0", 1);
+    const auto *transport_profile = std::getenv("FASTRTPS_DEFAULT_PROFILES_FILE");
+    const bool local_udp = transport_profile != nullptr &&
+        std::filesystem::path(transport_profile).filename() == "ros2-udp.xml";
+    // Humble appends a shared-memory transport when localhost_only is true.
+    // Our UDP profile restricts traffic to loopback without that override.
+    ::setenv("ROS_LOCALHOST_ONLY", local_udp ? "0" :
+             (config.ros.localhost_only ? "1" : "0"), 1);
     const auto domain = std::to_string(config.ros.domain_id);
     ::setenv("ROS_DOMAIN_ID", domain.c_str(), 1);
     rclcpp::init(0, nullptr);
@@ -93,11 +104,10 @@ int main(int argc, char **argv) {
     std::condition_variable update_wake;
     std::mutex update_mutex;
     const auto installed_binary = std::filesystem::weakly_canonical(
-        "/opt/batcan/batcan");
+        "/opt/batcan/bin/batcan");
     const auto running_binary = std::filesystem::weakly_canonical(
         executablePath());
-    const bool auto_update = ::geteuid() == 0 &&
-                             running_binary == installed_binary;
+    const bool auto_update = running_binary == installed_binary;
     std::thread update_thread;
     if (auto_update) {
       update_thread = std::thread(batcan::automaticUpdateLoop,

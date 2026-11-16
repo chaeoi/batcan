@@ -79,17 +79,17 @@ std::string bytesToHex(const std::vector<std::uint8_t> &bytes) {
 }
 
 int runCommand(const std::vector<std::string> &arguments) {
+  std::vector<char *> values;
+  values.reserve(arguments.size() + 1);
+  for (const auto &argument : arguments) {
+    values.push_back(const_cast<char *>(argument.c_str()));
+  }
+  values.push_back(nullptr);
   const auto child = ::fork();
   if (child < 0) {
     return -1;
   }
   if (child == 0) {
-    std::vector<char *> values;
-    values.reserve(arguments.size() + 1);
-    for (const auto &argument : arguments) {
-      values.push_back(const_cast<char *>(argument.c_str()));
-    }
-    values.push_back(nullptr);
     ::execvp(values[0], values.data());
     _exit(127);
   }
@@ -150,7 +150,7 @@ bool BatteryBridge::openCanSocket() {
     return false;
   }
 
-  can_fd_ = ::socket(PF_CAN, SOCK_RAW | SOCK_CLOEXEC, CAN_RAW);
+  can_fd_ = ::socket(PF_CAN, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, CAN_RAW);
   if (can_fd_ < 0) {
     RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
                          "open CAN socket failed: %s", std::strerror(errno));
@@ -338,9 +338,26 @@ void BatteryBridge::collectQuery(const QueryConfig &query,
       closeCanSocket();
       return;
     }
+    if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+      RCLCPP_WARN(get_logger(), "CAN interface became unavailable");
+      closeCanSocket();
+      return;
+    }
+    if ((descriptor.revents & POLLIN) == 0) {
+      continue;
+    }
 
     can_frame frame{};
-    if (::read(can_fd_, &frame, sizeof(frame)) != sizeof(frame)) {
+    const auto bytes = ::read(can_fd_, &frame, sizeof(frame));
+    if (bytes < 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+        continue;
+      }
+      RCLCPP_WARN(get_logger(), "read CAN failed: %s", std::strerror(errno));
+      closeCanSocket();
+      return;
+    }
+    if (bytes != sizeof(frame)) {
       continue;
     }
     for (std::size_t index = 0; index < query.responses.size(); ++index) {

@@ -94,10 +94,31 @@ ros2 topic echo /batcan/data --once
 sudo /opt/batcan/batcan service update
 
 # 查看服务状态
-batcan service status
+sudo /opt/batcan/batcan service status
 
 # 彻底卸载服务并清理全部程序、配置与日志痕迹
 sudo /opt/batcan/batcan service uninstall
 ```
 
 服务运行期间也会在后台定期（启动 30 秒后及后续每 24 小时）自动检测 GitHub 最新发布，自动验证校验和并原地无缝替换更新。
+
+
+## 运行权限与发布标识
+
+安装和卸载使用 sudo；服务以专用系统用户 `batcan` 运行，只由 systemd 授予
+`CAP_NET_ADMIN`，用于启停 SocketCAN 接口和切换波特率。CAN_RAW 收发不要求进程成为
+root。CAN 接口应专用于 BMS，自动探测会改变其波特率。
+
+配置文件为 `root:batcan`、权限 `0640`，在服务内只读。实际运行文件为 `/opt/batcan/bin/batcan`，只有 `bin/` 对 `batcan` 可写，
+用于校验后的原地更新；管理入口 `/opt/batcan/batcan` 和配置所在目录由 root 持有，日志目录由 systemd 管理。`ros2-udp.xml` 自动生成并由
+`FASTRTPS_DEFAULT_PROFILES_FILE` 加载，使不同用户启动的 ROS2 节点通过 UDP 通信，
+避免共享内存文件的权限冲突。与 baize 的 topic 和消息格式保持一致。
+
+每次成功发布使用 `日期-完整提交SHA` 作为版本和标签，同一天的提交分别保留。
+自动更新先读取 `SHA256SUMS`，只有已安装文件与最新发布文件不同才下载完整二进制，
+并在校验后检查候选程序能否执行、能否读取现有配置；失败时保留旧程序。
+自动替换后向自身发送 SIGTERM，由 ROS2 正常退出，再由 systemd 自动重启，
+不需要给普通服务用户执行 `systemctl restart` 的权限。
+
+有效配置保留；已有配置无效时会报错，只有显式 `--force-config` 才会重置。
+首次安装生成默认有效配置后会直接启动服务。
