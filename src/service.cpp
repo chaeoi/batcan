@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <csignal>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <sys/file.h>
 #include <sys/stat.h>
@@ -14,11 +15,14 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <mutex>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -37,6 +41,12 @@ constexpr const char *kUnitPath =
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
 constexpr auto kInitialUpdateDelay = std::chrono::seconds(30);
 constexpr auto kUpdateInterval = std::chrono::hours(24);
+
+std::string trim(const std::string &value) {
+  const auto first = value.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return "";
+  return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+}
 
 void requireRoot() {
   if (::geteuid() != 0) {
@@ -145,7 +155,7 @@ std::string runCommandOutput(const std::vector<std::string> &arguments) {
     throw std::runtime_error(arguments.front() + " exited with status " +
                              std::to_string(code));
   }
-  return output;
+  return trim(output);
 }
 
 std::string serviceUnit() {
@@ -333,15 +343,18 @@ std::string extractExpectedHash(const std::string &sha256sums_content,
   return "";
 }
 
-bool downloadReleaseFile(const std::string &name,
+bool downloadReleaseFile(const std::string &version, const std::string &name,
                          const std::string &destination,
                          const std::string &cache_buster) {
   const std::vector<std::string> base_urls = {
-      "https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases/latest/download",
-      "https://github.com/chaeoi/batcan/releases/latest/download"};
+      "https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases",
+      "https://github.com/chaeoi/batcan/releases"};
+
+  const auto path = version == "latest" ? "/latest/download/" :
+      "/download/" + version + "/";
 
   for (const auto &base : base_urls) {
-    const std::string url = base + "/" + name + "?batcan_cache=" + cache_buster;
+    const std::string url = base + path + name + "?batcan_cache=" + cache_buster;
     const std::vector<std::string> cmd = {
         "curl", "--connect-timeout", "8", "--max-time", "20", "--fail",
         "--location", "--silent", "--show-error", "--retry", "1",
@@ -352,6 +365,23 @@ bool downloadReleaseFile(const std::string &name,
     std::filesystem::remove(destination);
   }
   return false;
+}
+
+std::array<std::uint64_t, 3> releaseVersion(const std::string &version) {
+  static const std::regex pattern(R"(^([2-9][0-9]{3})\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$)");
+  std::smatch parts;
+  if (!std::regex_match(version, parts, pattern)) {
+    throw std::runtime_error("invalid release version: " + version);
+  }
+  std::array<std::uint64_t, 3> result;
+  for (std::size_t index = 0; index < result.size(); ++index) {
+    const auto number = std::stoull(parts[index + 1].str());
+    if (number > UINT32_MAX) {
+      throw std::runtime_error("release version component is too large");
+    }
+    result[index] = number;
+  }
+  return result;
 }
 
 int performUpdate(bool automatic = false) {
@@ -401,8 +431,25 @@ int performUpdate(bool automatic = false) {
 
   const auto downloaded_binary = (temp_dir / "batcan").string();
   const auto downloaded_sums = (temp_dir / "SHA256SUMS").string();
+  const auto downloaded_version = (temp_dir / "VERSION").string();
 
-  if (!downloadReleaseFile("SHA256SUMS", downloaded_sums, cache_buster)) {
+  if (!downloadReleaseFile("latest", "VERSION", downloaded_version, cache_buster)) {
+    throw std::runtime_error("cannot download release version");
+  }
+  if (std::filesystem::file_size(downloaded_version) > 128) {
+    throw std::runtime_error("release version file is too large");
+  }
+  std::ifstream version_file(downloaded_version);
+  const std::string new_version = trim(std::string(
+      std::istreambuf_iterator<char>(version_file), std::istreambuf_iterator<char>()));
+  const auto current_version = automatic ? std::string(BATCAN_VERSION) :
+      runCommandOutput({"timeout", "15s", kInstalledBinary, "--version"});
+  if (releaseVersion(new_version) <= releaseVersion(current_version)) {
+    std::cout << "batcan is up to date\n";
+    return 0;
+  }
+
+  if (!downloadReleaseFile(new_version, "SHA256SUMS", downloaded_sums, cache_buster)) {
     throw std::runtime_error("cannot download release checksums (SHA256SUMS)");
   }
 
@@ -418,12 +465,7 @@ int performUpdate(bool automatic = false) {
     throw std::runtime_error("release checksum is missing for " + asset);
   }
 
-  const auto current_hash = sha256::fileSha256(automatic ? "/proc/self/exe" : kInstalledBinary);
-  if (!current_hash.empty() && current_hash == expected_hash) {
-    std::cout << "batcan is up to date\n";
-    return 0;
-  }
-  if (!downloadReleaseFile(asset, downloaded_binary, cache_buster)) {
+  if (!downloadReleaseFile(new_version, asset, downloaded_binary, cache_buster)) {
     throw std::runtime_error("cannot download release asset: " + asset);
   }
   if (sha256::fileSha256(downloaded_binary) != expected_hash) {
@@ -434,9 +476,9 @@ int performUpdate(bool automatic = false) {
   }
   // A valid hash alone does not establish that the binary can run on this
   // machine or accepts the installed configuration.
-  const auto new_version = runCommandOutput({"timeout", "15s", downloaded_binary, "--version"});
-  if (new_version.empty()) {
-    throw std::runtime_error("candidate returned an empty version");
+  const auto candidate_version = runCommandOutput({"timeout", "15s", downloaded_binary, "--version"});
+  if (candidate_version != new_version) {
+    throw std::runtime_error("candidate version does not match release " + new_version);
   }
   runCommand({"timeout", "15s", downloaded_binary, "--check-config", "--config", kInstalledConfig});
 
