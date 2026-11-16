@@ -1,7 +1,6 @@
 #include "batcan/service.hpp"
 
 #include <fcntl.h>
-#include <pwd.h>
 #include <csignal>
 #include <algorithm>
 #include <cctype>
@@ -26,19 +25,15 @@
 #include <vector>
 
 #include "batcan/config.hpp"
-#include "batcan/embedded_transport.hpp"
 
 namespace batcan {
 namespace {
 
 constexpr const char *kInstallDirectory = "/opt/batcan";
-constexpr const char *kLauncherBinary = "/opt/batcan/batcan";
-constexpr const char *kRuntimeDirectory = "/opt/batcan/bin";
-constexpr const char *kInstalledBinary = "/opt/batcan/bin/batcan";
+constexpr const char *kInstalledBinary = "/opt/batcan/batcan";
 constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
-constexpr const char *kLogDirectory = "/var/log/batcan";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
 constexpr auto kInitialUpdateDelay = std::chrono::seconds(30);
 constexpr auto kUpdateInterval = std::chrono::hours(24);
@@ -161,22 +156,15 @@ std::string serviceUnit() {
       "Wants=network-online.target\n\n"
       "[Service]\n"
       "Type=simple\n"
-      "User=batcan\nGroup=batcan\nUMask=0027\n"
-      "NoNewPrivileges=true\n"
-      "CapabilityBoundingSet=CAP_NET_ADMIN\n"
-      "AmbientCapabilities=CAP_NET_ADMIN\n"
-      "ProtectSystem=strict\nReadWritePaths=/opt/batcan/bin\n"
-      "ReadOnlyPaths=/opt/batcan/config.yml /opt/batcan/ros2-udp.xml\n"
-      "Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/opt/batcan/ros2-udp.xml\n";
+      "User=root\nGroup=root\nUMask=0077\n"
+      "NoNewPrivileges=true\nProtectSystem=full\n";
   unit += "ExecStart=/bin/bash -lc 'source ";
   unit += kROSSetup;
-  unit += " && exec /opt/batcan/bin/batcan run --config ";
+  unit += " && exec /opt/batcan/batcan run --config ";
   unit += kInstalledConfig;
   unit +=
       "'\nRestart=always\nRestartSec=3\n"
-      "Environment=ROS_LOCALHOST_ONLY=1\n"
-      "Environment=ROS_LOG_DIR=/var/log/batcan/ros\n"
-      "LogsDirectory=batcan\nLogsDirectoryMode=0750\n"
+      "Environment=ROS_LOG_DIR=/opt/batcan/data/ros\n"
       "RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_CAN AF_INET AF_INET6\n\n"
       "[Install]\nWantedBy=multi-user.target\n";
   return unit;
@@ -367,7 +355,7 @@ bool downloadReleaseFile(const std::string &name,
 }
 
 int performUpdate(bool automatic = false) {
-  int lock_fd = ::open("/opt/batcan/bin/.update.lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0660);
+  int lock_fd = ::open("/tmp/batcan-update.lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0600);
   if (lock_fd < 0) {
     throw std::runtime_error("cannot open update lock");
   }
@@ -430,7 +418,7 @@ int performUpdate(bool automatic = false) {
     throw std::runtime_error("release checksum is missing for " + asset);
   }
 
-  const auto current_hash = sha256::fileSha256(kInstalledBinary);
+  const auto current_hash = sha256::fileSha256(automatic ? "/proc/self/exe" : kInstalledBinary);
   if (!current_hash.empty() && current_hash == expected_hash) {
     std::cout << "batcan is up to date\n";
     return 0;
@@ -463,8 +451,7 @@ int performUpdate(bool automatic = false) {
   std::cout << "updated batcan to " << new_version << '\n';
 
   if (automatic) {
-    // systemd restarts the service after ROS2 shuts down; no privilege to
-    // control other services is needed by the bridge.
+    // Let ROS2 stop cleanly, then systemd starts the replaced binary.
     ::kill(::getpid(), SIGTERM);
     return 0;
   }
@@ -486,64 +473,30 @@ void installService(const std::vector<std::string> &arguments,
     }
   }
 
-  auto account = ::getpwnam("batcan");
-  if (account == nullptr) {
-    runCommand({"useradd", "--system", "--user-group", "--home-dir",
-                "/var/log/batcan", "--no-create-home", "--shell",
-                "/usr/sbin/nologin", "batcan"});
-    account = ::getpwnam("batcan");
-  }
-  if (account == nullptr || account->pw_uid == 0) {
-    throw std::runtime_error("cannot resolve unprivileged batcan account");
-  }
-  const auto service_uid = account->pw_uid;
-  const auto service_gid = account->pw_gid;
   std::filesystem::create_directories(kInstallDirectory);
   // Preserve invalid existing configurations so a typo cannot silently reset
   // the selected CAN interface and start probing a different bus.
   if (force_config || !std::filesystem::exists(kInstalledConfig)) {
-    writeFileAtomic(kInstalledConfig, defaultConfig(), 0640);
+    writeFileAtomic(kInstalledConfig, defaultConfig(), 0600);
   }
   if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(kInstalledConfig))) {
     throw std::runtime_error("installed config must be a regular file");
   }
   (void)loadConfig(kInstalledConfig);
   runCommand({"systemctl", "stop", "batcan.service"}, true);
-  std::filesystem::create_directories(kRuntimeDirectory);
-  if (::chown(kInstallDirectory, 0, service_gid) != 0 ||
-      ::chown(kRuntimeDirectory, service_uid, service_gid) != 0 ||
-      ::chmod(kRuntimeDirectory, 0750) != 0 ||
-      ::chmod(kInstallDirectory, 0750) != 0 ||
-      ::chown(kInstalledConfig, 0, service_gid) != 0 ||
-      ::chmod(kInstalledConfig, 0640) != 0) {
+  if (::chown(kInstallDirectory, 0, 0) != 0 ||
+      ::chmod(kInstallDirectory, 0755) != 0 ||
+      ::chown(kInstalledConfig, 0, 0) != 0 ||
+      ::chmod(kInstalledConfig, 0600) != 0) {
     throw std::runtime_error("cannot set service permissions");
   }
-  writeFileAtomic(std::string(kInstallDirectory) + "/ros2-udp.xml",
-                  kROS2UDPProfile, 0644);
-  // The group must be able to reuse a lock created by a manual root update.
-  const auto lock_path = std::string(kRuntimeDirectory) + "/.update.lock";
-  const int lock_fd = ::open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0660);
-  if (lock_fd < 0) {
-    throw std::runtime_error("cannot create update lock");
-  }
-  const bool lock_permissions = ::fchown(lock_fd, service_uid, service_gid) == 0 &&
-                                ::fchmod(lock_fd, 0660) == 0;
-  ::close(lock_fd);
-  if (!lock_permissions) {
-    throw std::runtime_error("cannot set update lock permissions");
-  }
-
-  for (const auto *destination : {kLauncherBinary, kInstalledBinary}) {
-    if (std::filesystem::weakly_canonical(executable_path) !=
-        std::filesystem::weakly_canonical(destination)) {
-      std::ifstream input(executable_path, std::ios::binary);
-      if (!input) {
-        throw std::runtime_error("cannot read installer binary");
-      }
-      std::ostringstream content;
-      content << input.rdbuf();
-      writeFileAtomic(destination, content.str(), 0755);
-    }
+  if (std::filesystem::weakly_canonical(executable_path) !=
+      std::filesystem::weakly_canonical(kInstalledBinary)) {
+    std::ifstream input(executable_path, std::ios::binary);
+    if (!input) throw std::runtime_error("cannot read installer binary");
+    std::ostringstream content;
+    content << input.rdbuf();
+    writeFileAtomic(kInstalledBinary, content.str(), 0755);
   }
   writeFileAtomic(kUnitPath, serviceUnit(), 0644);
   runCommand({"systemctl", "daemon-reload"});
@@ -567,7 +520,6 @@ void uninstallService(const std::vector<std::string> &arguments) {
   std::filesystem::remove(kUnitPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
-  std::filesystem::remove_all(kLogDirectory);
   std::filesystem::remove_all(kInstallDirectory);
   std::cout << "已彻底卸载 batcan 服务并清理全部程序文件、配置与运行日志。\n";
 }
@@ -578,7 +530,7 @@ int serviceCommand(const std::vector<std::string> &arguments,
                    const std::string &executable_path) {
   if (arguments.empty()) {
     throw std::runtime_error(
-        "service requires install, update, uninstall or status");
+        "service requires install, update, uninstall, start, stop, restart or status");
   }
   const std::vector<std::string> options(arguments.begin() + 1,
                                          arguments.end());
@@ -597,12 +549,14 @@ int serviceCommand(const std::vector<std::string> &arguments,
     }
     return performUpdate();
   }
-  if (arguments.front() == "status") {
+  if (arguments.front() == "start" || arguments.front() == "stop" ||
+      arguments.front() == "restart" || arguments.front() == "status") {
+    if (arguments.front() != "status") requireRoot();
     if (!options.empty()) {
-      throw std::runtime_error("service status takes no options");
+      throw std::runtime_error("service control takes no options");
     }
-    return runCommand({"systemctl", "status", "batcan.service"},
-                      true);
+    return runCommand({"systemctl", arguments.front(), "batcan.service"},
+                      arguments.front() == "status");
   }
   throw std::runtime_error("unknown service command: " + arguments.front());
 }
