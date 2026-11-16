@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 project(batcan LANGUAGES CXX)
 
-set(BATCAN_VERSION "" CACHE STRING "Source revision shown by batcan")
+set(BATCAN_VERSION "" CACHE STRING "Release version shown by batcan")
 if(NOT BATCAN_VERSION)
-  execute_process(COMMAND git rev-parse HEAD
+  execute_process(COMMAND git describe --tags --always --match "[0-9][0-9][0-9][0-9].*.*"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     OUTPUT_VARIABLE BATCAN_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
   if(NOT BATCAN_VERSION)

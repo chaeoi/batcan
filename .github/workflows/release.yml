@@ -2,7 +2,7 @@ name: Build and release batcan
 
 on:
   push:
-    branches: [main]
+    tags: ['[0-9][0-9][0-9][0-9].[0-9]*.[0-9]*']
   workflow_dispatch:
 
 concurrency:
@@ -11,6 +11,9 @@ concurrency:
 
 permissions:
   contents: write
+
+env:
+  VERSION: ${{ github.ref_name }}
 
 jobs:
   build:
@@ -27,6 +30,11 @@ jobs:
             runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
+      - name: Validate release version
+        shell: bash
+        run: |
+          test "$GITHUB_REF_TYPE" = tag
+          [[ "$VERSION" =~ ^[2-9][0-9]{3}\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$ ]]
       - name: Install build dependencies
         run: |
           apt-get update
@@ -34,8 +42,7 @@ jobs:
       - name: Build and test
         run: |
           . /opt/ros/humble/setup.sh
-          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)-$GITHUB_SHA"
-          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DBATCAN_VERSION="$version"
+          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DBATCAN_VERSION="$VERSION"
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure
           mkdir -p dist
@@ -59,20 +66,39 @@ jobs:
           pattern: batcan-*
           merge-multiple: true
           path: dist
-      - name: Compute release version
-        id: version
+      - name: Generate release metadata
         run: |
           set -euo pipefail
-          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)-$GITHUB_SHA"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$VERSION" > dist/VERSION
           (cd dist && sha256sum batcan-linux-* > SHA256SUMS)
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release delete "$VERSION" --yes
+          notes=$(mktemp)
+          if [ "$(git cat-file -t "$VERSION")" = tag ]; then
+            git for-each-ref --format='%(contents)' "refs/tags/$VERSION" > "$notes"
+          else
+            printf 'batcan %s 正式版。\n' "$VERSION" > "$notes"
           fi
-          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS --target "$GITHUB_SHA" --title "batcan $VERSION" --notes "Prebuilt Linux AMD64 and ARM64 binaries." --latest
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/$VERSION"
+          {
+            printf '\n## 安装与升级\n\n'
+            printf '[安装、配置和服务管理](https://github.com/%s/blob/%s/README.md#安装与快速上手)。运行环境为 Linux 与 ROS2 Humble。\n' "$GITHUB_REPOSITORY" "$VERSION"
+            printf '\n## 下载\n\n'
+            printf '| Linux 架构 | 程序 |\n|---|---|\n'
+            for arch in amd64 arm64; do
+              printf '| %s | [batcan-linux-%s](%s/batcan-linux-%s) |\n' "$arch" "$arch" "$base" "$arch"
+            done
+            printf '\n## SHA-256\n\n下载附件 \140SHA256SUMS\140 后，可用 \140sha256sum --check --ignore-missing SHA256SUMS\140 校验。\n\n\140\140\140text\n'
+            cat dist/SHA256SUMS
+            printf '\140\140\140\n'
+          } >> "$notes"
+          previous=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || true)
+          if [[ "$previous" =~ ^[2-9][0-9]{3}\.([1-9]|1[0-2])\.(0|[1-9][0-9]*)$ ]] && [ "$previous" != "$VERSION" ]; then
+            printf '\n' >> "$notes"
+            gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$VERSION" -f previous_tag_name="$previous" --jq .body >> "$notes"
+          fi
+          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS dist/VERSION \
+            --verify-tag --title "batcan $VERSION" --notes-file "$notes" --latest
