@@ -443,7 +443,7 @@ int performUpdate(bool automatic = false) {
   const auto downloaded_binary = (temp_dir / "batcan").string();
   const auto downloaded_sums = (temp_dir / "SHA256SUMS").string();
   const auto new_version = latestReleaseVersion(cache_buster);
-  const auto current_version = automatic ? std::string(BATCAN_VERSION) :
+  const auto current_version =
       runCommandOutput({"timeout", "15s", kInstalledBinary, "--version"});
   if (releaseVersion(new_version) <= releaseVersion(current_version)) {
     std::cout << "batcan is up to date\n";
