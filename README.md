@@ -90,7 +90,7 @@ ros2 topic echo /batcan/data --once
 程序将更新逻辑完全内置于单一二进制中，无需任何外部脚本：
 
 ```bash
-# 手动触发版本检查与原地热更
+# 手动检查、更新并重启服务
 sudo /opt/batcan/batcan service update
 
 # 查看服务状态
@@ -100,25 +100,32 @@ sudo /opt/batcan/batcan service status
 sudo /opt/batcan/batcan service uninstall
 ```
 
-服务运行期间也会在后台定期（启动 30 秒后及后续每 24 小时）自动检测 GitHub 最新发布，自动验证校验和并原地无缝替换更新。
+服务运行期间也会在后台定期（启动 30 秒后及后续每 24 小时）自动检测 GitHub 最新发布，自动验证校验和及当前配置，再原子替换自身并退出，由 systemd 重启。
 
 
-## 运行权限与发布标识
+## 运行权限与目录
 
-安装和卸载使用 sudo；服务以专用系统用户 `batcan` 运行，只由 systemd 授予
-`CAP_NET_ADMIN`，用于启停 SocketCAN 接口和切换波特率。CAN_RAW 收发不要求进程成为
-root。CAN 接口应专用于 BMS，自动探测会改变其波特率。
+服务与哪吒 Agent 相同，默认以 root 运行。安装目录为 `root:root`、权限 `0755`，
+配置为 `root:root`、权限 `0600`。运行、服务管理、版本查询与自动更新使用同一个二进制。
 
-配置文件为 `root:batcan`、权限 `0640`，在服务内只读。实际运行文件为 `/opt/batcan/bin/batcan`，只有 `bin/` 对 `batcan` 可写，
-用于校验后的原地更新；管理入口 `/opt/batcan/batcan` 和配置所在目录由 root 持有，日志目录由 systemd 管理。`ros2-udp.xml` 自动生成并由
-`FASTRTPS_DEFAULT_PROFILES_FILE` 加载，使不同用户启动的 ROS2 节点通过 UDP 通信，
-避免共享内存文件的权限冲突。与 baize 的 topic 和消息格式保持一致。
+```text
+/opt/batcan/
+├── batcan
+├── config.yml
+└── data/ros/
+/etc/systemd/system/batcan.service
+```
+
+`service start`、`stop`、`restart`、`status` 管理同一个 systemd 服务，
+日志通过 `journalctl -u batcan` 查看。更新锁位于 `/tmp/batcan-update.lock`。
+Fast DDS 的回环 UDP 配置由程序直接加载，不安装单独的 XML 文件。
+CAN 接口应专用于 BMS，自动探测会改变其波特率。
 
 每次成功发布使用 `日期-完整提交SHA` 作为版本和标签，同一天的提交分别保留。
-自动更新先读取 `SHA256SUMS`，只有已安装文件与最新发布文件不同才下载完整二进制，
-并在校验后检查候选程序能否执行、能否读取现有配置；失败时保留旧程序。
-自动替换后向自身发送 SIGTERM，由 ROS2 正常退出，再由 systemd 自动重启，
-不需要给普通服务用户执行 `systemctl restart` 的权限。
+自动更新先读取 `SHA256SUMS`，只有正在运行的程序与最新发布文件不同才下载完整二进制，
+校验后检查候选程序能否执行、能否读取现有配置。验证失败时继续运行当前程序。
+替换完成后向自身发送 SIGTERM，让 ROS2 正常退出，再由 systemd 的 `Restart=always` 启动新程序。
+手动执行 `service update` 则会在替换后重启服务。
 
 有效配置保留；已有配置无效时会报错，只有显式 `--force-config` 才会重置。
 首次安装生成默认有效配置后会直接启动服务。

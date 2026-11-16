@@ -1,3 +1,0 @@
-#pragma once
-
-constexpr const char *kROS2UDPProfile = R"BATCAN_UDP(@BATCAN_ROS2_UDP_PROFILE@)BATCAN_UDP";

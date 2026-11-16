@@ -23,10 +23,11 @@ set(CMAKE_BUILD_WITH_INSTALL_RPATH ON)
 find_package(ament_cmake REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(fastrtps REQUIRED)
 
 set(BATCAN_MODEL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/models/bms.yml")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-  "${BATCAN_MODEL_FILE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ros2-udp.xml")
+  "${BATCAN_MODEL_FILE}")
 if(NOT EXISTS "${BATCAN_MODEL_FILE}")
   message(FATAL_ERROR "Missing BMS configuration: models/bms.yml")
 endif()
@@ -43,9 +44,6 @@ set(BATCAN_EMBEDDED_MODEL_ENTRIES
   "  {\"bms\", R\"BATCAN_${BATCAN_MODEL_DELIMITER}(\n${BATCAN_MODEL_CONTENT})BATCAN_${BATCAN_MODEL_DELIMITER}\"},\n")
 set(BATCAN_EMBEDDED_MODEL_COUNT 1)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan")
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ros2-udp.xml" BATCAN_ROS2_UDP_PROFILE)
-configure_file(cmake/embedded_transport.hpp.in
-  "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan/embedded_transport.hpp" @ONLY)
 configure_file(
   cmake/embedded_models.hpp.in
   "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan/embedded_models.hpp"
@@ -69,7 +67,7 @@ set_target_properties(batcan PROPERTIES
   BUILD_RPATH "/opt/ros/humble/lib;/opt/ros/humble/lib/aarch64-linux-gnu;/opt/ros/humble/lib/x86_64-linux-gnu"
   INSTALL_RPATH "/opt/ros/humble/lib;/opt/ros/humble/lib/aarch64-linux-gnu;/opt/ros/humble/lib/x86_64-linux-gnu")
 target_include_directories(batcan PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_link_libraries(batcan batcan_core)
+target_link_libraries(batcan batcan_core fastrtps)
 ament_target_dependencies(batcan diagnostic_msgs rclcpp)
 target_link_options(batcan PRIVATE -Wl,--disable-new-dtags)
 target_compile_definitions(batcan PRIVATE
