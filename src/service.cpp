@@ -20,7 +20,6 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <iterator>
 #include <mutex>
 #include <regex>
 #include <sstream>
@@ -350,8 +349,7 @@ bool downloadReleaseFile(const std::string &version, const std::string &name,
       "https://gitwarp.canghai.org/github.com/chaeoi/batcan/releases",
       "https://github.com/chaeoi/batcan/releases"};
 
-  const auto path = version == "latest" ? "/latest/download/" :
-      "/download/" + version + "/";
+  const auto path = "/download/" + version + "/";
 
   for (const auto &base : base_urls) {
     const std::string url = base + path + name + "?batcan_cache=" + cache_buster;
@@ -382,6 +380,19 @@ std::array<std::uint64_t, 3> releaseVersion(const std::string &version) {
     result[index] = number;
   }
   return result;
+}
+
+std::string latestReleaseVersion(const std::string &cache_buster) {
+  const auto location = runCommandOutput({
+      "curl", "--connect-timeout", "8", "--max-time", "20", "--fail",
+      "--silent", "--show-error", "--head", "--output", "/dev/null",
+      "--write-out", "%{redirect_url}",
+      "https://github.com/chaeoi/batcan/releases/latest?batcan_cache=" + cache_buster});
+  const std::string prefix = "https://github.com/chaeoi/batcan/releases/tag/";
+  if (location.compare(0, prefix.size(), prefix) != 0) {
+    throw std::runtime_error("GitHub returned an invalid release location");
+  }
+  return location.substr(prefix.size());
 }
 
 int performUpdate(bool automatic = false) {
@@ -431,17 +442,7 @@ int performUpdate(bool automatic = false) {
 
   const auto downloaded_binary = (temp_dir / "batcan").string();
   const auto downloaded_sums = (temp_dir / "SHA256SUMS").string();
-  const auto downloaded_version = (temp_dir / "VERSION").string();
-
-  if (!downloadReleaseFile("latest", "VERSION", downloaded_version, cache_buster)) {
-    throw std::runtime_error("cannot download release version");
-  }
-  if (std::filesystem::file_size(downloaded_version) > 128) {
-    throw std::runtime_error("release version file is too large");
-  }
-  std::ifstream version_file(downloaded_version);
-  const std::string new_version = trim(std::string(
-      std::istreambuf_iterator<char>(version_file), std::istreambuf_iterator<char>()));
+  const auto new_version = latestReleaseVersion(cache_buster);
   const auto current_version = automatic ? std::string(BATCAN_VERSION) :
       runCommandOutput({"timeout", "15s", kInstalledBinary, "--version"});
   if (releaseVersion(new_version) <= releaseVersion(current_version)) {

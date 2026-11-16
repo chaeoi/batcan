@@ -66,10 +66,9 @@ jobs:
           pattern: batcan-*
           merge-multiple: true
           path: dist
-      - name: Generate release metadata
+      - name: Generate checksums
         run: |
           set -euo pipefail
-          printf '%s\n' "$VERSION" > dist/VERSION
           (cd dist && sha256sum batcan-linux-* > SHA256SUMS)
       - name: Publish GitHub release
         env:
@@ -100,5 +99,5 @@ jobs:
             printf '\n' >> "$notes"
             gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$VERSION" -f previous_tag_name="$previous" --jq .body >> "$notes"
           fi
-          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS dist/VERSION \
+          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS \
             --verify-tag --title "batcan $VERSION" --notes-file "$notes" --latest
