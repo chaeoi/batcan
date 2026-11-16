@@ -1,27 +1,14 @@
 cmake_minimum_required(VERSION 3.16)
 project(batcan LANGUAGES CXX)
 
-set(BATCAN_VERSION "" CACHE STRING "Runtime version shown by batcan")
+set(BATCAN_VERSION "" CACHE STRING "Source revision shown by batcan")
 if(NOT BATCAN_VERSION)
-  set(BATCAN_COMMIT_DATE "")
-  execute_process(
-    COMMAND git log -1 --format=%cI
+  execute_process(COMMAND git rev-parse HEAD
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    OUTPUT_VARIABLE BATCAN_COMMIT_DATE
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET)
-  if(BATCAN_COMMIT_DATE)
-    execute_process(
-      COMMAND date -u -d "${BATCAN_COMMIT_DATE}" +%Y%m%d
-      OUTPUT_VARIABLE BATCAN_VERSION
-      OUTPUT_STRIP_TRAILING_WHITESPACE
-      ERROR_QUIET)
-  endif()
+    OUTPUT_VARIABLE BATCAN_VERSION OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
   if(NOT BATCAN_VERSION)
-    string(TIMESTAMP BATCAN_VERSION "%Y%m%d" UTC)
+    set(BATCAN_VERSION "dev")
   endif()
-  set(BATCAN_VERSION "${BATCAN_VERSION}" CACHE STRING
-      "Runtime version shown by batcan" FORCE)
 endif()
 
 set(CMAKE_CXX_STANDARD 17)
@@ -38,6 +25,8 @@ find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 
 set(BATCAN_MODEL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/models/bms.yml")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${BATCAN_MODEL_FILE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ros2-udp.xml")
 if(NOT EXISTS "${BATCAN_MODEL_FILE}")
   message(FATAL_ERROR "Missing BMS configuration: models/bms.yml")
 endif()
@@ -54,6 +43,9 @@ set(BATCAN_EMBEDDED_MODEL_ENTRIES
   "  {\"bms\", R\"BATCAN_${BATCAN_MODEL_DELIMITER}(\n${BATCAN_MODEL_CONTENT})BATCAN_${BATCAN_MODEL_DELIMITER}\"},\n")
 set(BATCAN_EMBEDDED_MODEL_COUNT 1)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ros2-udp.xml" BATCAN_ROS2_UDP_PROFILE)
+configure_file(cmake/embedded_transport.hpp.in
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan/embedded_transport.hpp" @ONLY)
 configure_file(
   cmake/embedded_models.hpp.in
   "${CMAKE_CURRENT_BINARY_DIR}/generated/batcan/embedded_models.hpp"
@@ -76,7 +68,7 @@ add_executable(batcan
 set_target_properties(batcan PROPERTIES
   BUILD_RPATH "/opt/ros/humble/lib;/opt/ros/humble/lib/aarch64-linux-gnu;/opt/ros/humble/lib/x86_64-linux-gnu"
   INSTALL_RPATH "/opt/ros/humble/lib;/opt/ros/humble/lib/aarch64-linux-gnu;/opt/ros/humble/lib/x86_64-linux-gnu")
-target_include_directories(batcan PRIVATE include)
+target_include_directories(batcan PRIVATE include "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(batcan batcan_core)
 ament_target_dependencies(batcan diagnostic_msgs rclcpp)
 target_link_options(batcan PRIVATE -Wl,--disable-new-dtags)

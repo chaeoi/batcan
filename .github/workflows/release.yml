@@ -34,7 +34,7 @@ jobs:
       - name: Build and test
         run: |
           . /opt/ros/humble/setup.sh
-          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)"
+          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)-$GITHUB_SHA"
           cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release -DBATCAN_VERSION="$version"
           cmake --build build --parallel
           ctest --test-dir build --output-on-failure
@@ -63,21 +63,9 @@ jobs:
         id: version
         run: |
           set -euo pipefail
-          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)"
+          version="$(date -u -d "$(git log -1 --format=%cI "$GITHUB_SHA")" +%Y%m%d)-$GITHUB_SHA"
           echo "version=$version" >> "$GITHUB_OUTPUT"
           (cd dist && sha256sum batcan-linux-* > SHA256SUMS)
-      - name: Move date tag
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          set -euo pipefail
-          ref="refs/tags/$VERSION"
-          if gh api --silent "repos/$GITHUB_REPOSITORY/git/ref/tags/$VERSION" >/dev/null 2>&1; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$VERSION" -f sha="$GITHUB_SHA" -F force=true >/dev/null
-          else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="$ref" -f sha="$GITHUB_SHA" >/dev/null
-          fi
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -87,4 +75,4 @@ jobs:
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release delete "$VERSION" --yes
           fi
-          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS --target "$GITHUB_SHA" --title "batcan $VERSION" --notes "Prebuilt Linux AMD64 and ARM64 binaries."
+          gh release create "$VERSION" dist/batcan-linux-amd64 dist/batcan-linux-arm64 dist/SHA256SUMS --target "$GITHUB_SHA" --title "batcan $VERSION" --notes "Prebuilt Linux AMD64 and ARM64 binaries." --latest

@@ -80,16 +80,15 @@ if [ ! -e "$install_directory/config.yml" ]; then
   # 优先采用传入的 BATCAN_INTERFACE，否则使用默认值 can5
   selected_interface="${BATCAN_INTERFACE:-can5}"
   case "$selected_interface" in
-    *[!a-zA-Z0-9_-]*)
+    ''|*[!a-zA-Z0-9_-]*)
       echo "BATCAN_INTERFACE 只能包含字母、数字、下划线或短横线。" >&2
       exit 1
       ;;
   esac
-  # 运行二进制输出默认全开的 auto 配置
-  "$binary" service install --force-config >/dev/null 2>&1 || true
-  if [ -n "${BATCAN_INTERFACE:-}" ] && [ -f "$install_directory/config.yml" ]; then
-    sed -i "s/^interface:.*/interface: $selected_interface/" "$install_directory/config.yml"
-  fi
+  "$binary" --print-default-config > "$temporary_directory/config.yml"
+  sed -i "s/^interface:.*/interface: $selected_interface/" "$temporary_directory/config.yml"
+  chmod 0640 "$temporary_directory/config.yml"
+  mv "$temporary_directory/config.yml" "$install_directory/config.yml"
   config_created=true
 fi
 

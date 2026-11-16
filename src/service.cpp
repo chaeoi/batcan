@@ -1,6 +1,10 @@
 #include "batcan/service.hpp"
 
 #include <fcntl.h>
+#include <pwd.h>
+#include <csignal>
+#include <algorithm>
+#include <cctype>
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -22,17 +26,19 @@
 #include <vector>
 
 #include "batcan/config.hpp"
+#include "batcan/embedded_transport.hpp"
 
 namespace batcan {
 namespace {
 
 constexpr const char *kInstallDirectory = "/opt/batcan";
-constexpr const char *kInstalledBinary = "/opt/batcan/batcan";
+constexpr const char *kLauncherBinary = "/opt/batcan/batcan";
+constexpr const char *kRuntimeDirectory = "/opt/batcan/bin";
+constexpr const char *kInstalledBinary = "/opt/batcan/bin/batcan";
 constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
 constexpr const char *kLogDirectory = "/var/log/batcan";
-constexpr const char *kPrivateLogDirectory = "/var/log/private/batcan";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
 constexpr auto kInitialUpdateDelay = std::chrono::seconds(30);
 constexpr auto kUpdateInterval = std::chrono::hours(24);
@@ -46,38 +52,50 @@ void requireRoot() {
 
 void writeFileAtomic(const std::string &path, const std::string &content,
                      mode_t mode) {
-  const auto temporary = path + ".tmp." + std::to_string(::getpid());
-  {
-    std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
-    if (!stream) {
+  auto temporary = path + ".tmp.XXXXXX";
+  const int fd = ::mkstemp(temporary.data());
+  if (fd < 0) {
+    throw std::runtime_error("cannot create temporary file for " + path);
+  }
+  struct FileGuard {
+    int fd;
+    std::string path;
+    ~FileGuard() {
+      ::close(fd);
+      std::error_code error;
+      std::filesystem::remove(path, error);
+    }
+  } guard{fd, temporary};
+  std::size_t offset = 0;
+  while (offset < content.size()) {
+    const auto count = ::write(fd, content.data() + offset, content.size() - offset);
+    if (count < 0 && errno == EINTR) {
+      continue;
+    }
+    if (count <= 0) {
       throw std::runtime_error("cannot write " + temporary);
     }
-    stream << content;
-    stream.flush();
-    if (!stream) {
-      throw std::runtime_error("cannot flush " + temporary);
-    }
+    offset += static_cast<std::size_t>(count);
   }
-  if (::chmod(temporary.c_str(), mode) != 0) {
-    std::filesystem::remove(temporary);
-    throw std::runtime_error("cannot set permissions on " + temporary);
+  if (::fchmod(fd, mode) != 0 || ::fsync(fd) != 0) {
+    throw std::runtime_error("cannot persist " + temporary);
   }
   std::filesystem::rename(temporary, path);
 }
 
 int runCommand(const std::vector<std::string> &arguments,
                bool allow_failure = false) {
+  std::vector<char *> values;
+  values.reserve(arguments.size() + 1);
+  for (const auto &argument : arguments) {
+    values.push_back(const_cast<char *>(argument.c_str()));
+  }
+  values.push_back(nullptr);
   const auto child = ::fork();
   if (child < 0) {
     throw std::runtime_error("fork failed");
   }
   if (child == 0) {
-    std::vector<char *> values;
-    values.reserve(arguments.size() + 1);
-    for (const auto &argument : arguments) {
-      values.push_back(const_cast<char *>(argument.c_str()));
-    }
-    values.push_back(nullptr);
     ::execvp(values[0], values.data());
     _exit(127);
   }
@@ -98,6 +116,12 @@ std::string runCommandOutput(const std::vector<std::string> &arguments) {
   if (::pipe(pipefd) < 0) {
     throw std::runtime_error("pipe failed");
   }
+  std::vector<char *> values;
+  values.reserve(arguments.size() + 1);
+  for (const auto &argument : arguments) {
+    values.push_back(const_cast<char *>(argument.c_str()));
+  }
+  values.push_back(nullptr);
   const auto child = ::fork();
   if (child < 0) {
     ::close(pipefd[0]);
@@ -108,12 +132,6 @@ std::string runCommandOutput(const std::vector<std::string> &arguments) {
     ::close(pipefd[0]);
     ::dup2(pipefd[1], STDOUT_FILENO);
     ::close(pipefd[1]);
-    std::vector<char *> values;
-    values.reserve(arguments.size() + 1);
-    for (const auto &argument : arguments) {
-      values.push_back(const_cast<char *>(argument.c_str()));
-    }
-    values.push_back(nullptr);
     ::execvp(values[0], values.data());
     _exit(127);
   }
@@ -142,10 +160,17 @@ std::string serviceUnit() {
       "After=network-online.target\n"
       "Wants=network-online.target\n\n"
       "[Service]\n"
-      "Type=simple\n";
+      "Type=simple\n"
+      "User=batcan\nGroup=batcan\nUMask=0027\n"
+      "NoNewPrivileges=true\n"
+      "CapabilityBoundingSet=CAP_NET_ADMIN\n"
+      "AmbientCapabilities=CAP_NET_ADMIN\n"
+      "ProtectSystem=strict\nReadWritePaths=/opt/batcan/bin\n"
+      "ReadOnlyPaths=/opt/batcan/config.yml /opt/batcan/ros2-udp.xml\n"
+      "Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/opt/batcan/ros2-udp.xml\n";
   unit += "ExecStart=/bin/bash -lc 'source ";
   unit += kROSSetup;
-  unit += " && exec /opt/batcan/batcan run --config ";
+  unit += " && exec /opt/batcan/bin/batcan run --config ";
   unit += kInstalledConfig;
   unit +=
       "'\nRestart=always\nRestartSec=3\n"
@@ -307,7 +332,13 @@ std::string extractExpectedHash(const std::string &sha256sums_content,
         name = name.substr(1);
       }
       if (name == asset_name) {
-        return hash;
+        if (hash.size() == 64 && std::all_of(hash.begin(), hash.end(),
+            [](unsigned char c) { return std::isxdigit(c) != 0; })) {
+          std::transform(hash.begin(), hash.end(), hash.begin(),
+                         [](unsigned char c) { return std::tolower(c); });
+          return hash;
+        }
+        return "";
       }
     }
   }
@@ -335,13 +366,18 @@ bool downloadReleaseFile(const std::string &name,
   return false;
 }
 
-int performUpdate() {
-  int lock_fd = ::open("/run/lock/batcan-update.lock", O_CREAT | O_RDWR, 0600);
-  if (lock_fd >= 0) {
-    if (::flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
-      ::close(lock_fd);
+int performUpdate(bool automatic = false) {
+  int lock_fd = ::open("/opt/batcan/bin/.update.lock", O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0660);
+  if (lock_fd < 0) {
+    throw std::runtime_error("cannot open update lock");
+  }
+  if (::flock(lock_fd, LOCK_EX | LOCK_NB) != 0) {
+    const int error = errno;
+    ::close(lock_fd);
+    if (error == EWOULDBLOCK) {
       return 0;
     }
+    throw std::runtime_error("cannot acquire update lock");
   }
 
   struct LockGuard {
@@ -378,9 +414,6 @@ int performUpdate() {
   const auto downloaded_binary = (temp_dir / "batcan").string();
   const auto downloaded_sums = (temp_dir / "SHA256SUMS").string();
 
-  if (!downloadReleaseFile(asset, downloaded_binary, cache_buster)) {
-    throw std::runtime_error("cannot download release asset: " + asset);
-  }
   if (!downloadReleaseFile("SHA256SUMS", downloaded_sums, cache_buster)) {
     throw std::runtime_error("cannot download release checksums (SHA256SUMS)");
   }
@@ -397,43 +430,46 @@ int performUpdate() {
     throw std::runtime_error("release checksum is missing for " + asset);
   }
 
-  const auto actual_hash = sha256::fileSha256(downloaded_binary);
-  if (actual_hash != expected_hash) {
-    throw std::runtime_error("release checksum mismatch");
-  }
-
-  ::chmod(downloaded_binary.c_str(), 0755);
-  std::string new_version;
-  try {
-    new_version = runCommandOutput({downloaded_binary, "--version"});
-    while (!new_version.empty() &&
-           (new_version.back() == '\n' || new_version.back() == '\r')) {
-      new_version.pop_back();
-    }
-  } catch (const std::exception &e) {
-    new_version = "unknown";
-  }
-
-  std::string current_hash;
-  if (std::filesystem::exists(kInstalledBinary)) {
-    current_hash = sha256::fileSha256(kInstalledBinary);
-  }
-
+  const auto current_hash = sha256::fileSha256(kInstalledBinary);
   if (!current_hash.empty() && current_hash == expected_hash) {
-    std::cout << "batcan is up to date: " << new_version << '\n';
+    std::cout << "batcan is up to date\n";
     return 0;
   }
+  if (!downloadReleaseFile(asset, downloaded_binary, cache_buster)) {
+    throw std::runtime_error("cannot download release asset: " + asset);
+  }
+  if (sha256::fileSha256(downloaded_binary) != expected_hash) {
+    throw std::runtime_error("release checksum mismatch");
+  }
+  if (::chmod(downloaded_binary.c_str(), 0755) != 0) {
+    throw std::runtime_error("cannot make candidate executable");
+  }
+  // A valid hash alone does not establish that the binary can run on this
+  // machine or accepts the installed configuration.
+  const auto new_version = runCommandOutput({"timeout", "15s", downloaded_binary, "--version"});
+  if (new_version.empty()) {
+    throw std::runtime_error("candidate returned an empty version");
+  }
+  runCommand({"timeout", "15s", downloaded_binary, "--check-config", "--config", kInstalledConfig});
 
-  const std::string binary_new = std::string(kInstalledBinary) + ".new";
-  std::filesystem::copy_file(downloaded_binary, binary_new,
-                             std::filesystem::copy_options::overwrite_existing);
-  ::chmod(binary_new.c_str(), 0755);
-  std::filesystem::rename(binary_new, kInstalledBinary);
+  std::ifstream input(downloaded_binary, std::ios::binary);
+  std::ostringstream content;
+  content << input.rdbuf();
+  if (!input || !content) {
+    throw std::runtime_error("cannot read validated candidate");
+  }
+  writeFileAtomic(kInstalledBinary, content.str(), 0755);
 
   std::cout << "updated batcan to " << new_version << '\n';
 
+  if (automatic) {
+    // systemd restarts the service after ROS2 shuts down; no privilege to
+    // control other services is needed by the bridge.
+    ::kill(::getpid(), SIGTERM);
+    return 0;
+  }
   if (runCommand({"systemctl", "is-active", "--quiet", "batcan.service"}, true) == 0) {
-    runCommand({"systemctl", "restart", "batcan.service"}, true);
+    runCommand({"systemctl", "restart", "batcan.service"});
   }
   return 0;
 }
@@ -450,38 +486,67 @@ void installService(const std::vector<std::string> &arguments,
     }
   }
 
+  auto account = ::getpwnam("batcan");
+  if (account == nullptr) {
+    runCommand({"useradd", "--system", "--user-group", "--home-dir",
+                "/var/log/batcan", "--no-create-home", "--shell",
+                "/usr/sbin/nologin", "batcan"});
+    account = ::getpwnam("batcan");
+  }
+  if (account == nullptr || account->pw_uid == 0) {
+    throw std::runtime_error("cannot resolve unprivileged batcan account");
+  }
+  const auto service_uid = account->pw_uid;
+  const auto service_gid = account->pw_gid;
   std::filesystem::create_directories(kInstallDirectory);
-  bool valid_config = false;
-  if (!force_config && std::filesystem::exists(kInstalledConfig)) {
-    try {
-      (void)loadConfig(kInstalledConfig);
-      valid_config = true;
-    } catch (const std::exception &) {
-      writeFileAtomic(kInstalledConfig, defaultConfig(), 0644);
-    }
-  } else {
-    writeFileAtomic(kInstalledConfig, defaultConfig(), 0644);
+  // Preserve invalid existing configurations so a typo cannot silently reset
+  // the selected CAN interface and start probing a different bus.
+  if (force_config || !std::filesystem::exists(kInstalledConfig)) {
+    writeFileAtomic(kInstalledConfig, defaultConfig(), 0640);
+  }
+  if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(kInstalledConfig))) {
+    throw std::runtime_error("installed config must be a regular file");
+  }
+  (void)loadConfig(kInstalledConfig);
+  runCommand({"systemctl", "stop", "batcan.service"}, true);
+  std::filesystem::create_directories(kRuntimeDirectory);
+  if (::chown(kInstallDirectory, 0, service_gid) != 0 ||
+      ::chown(kRuntimeDirectory, service_uid, service_gid) != 0 ||
+      ::chmod(kRuntimeDirectory, 0750) != 0 ||
+      ::chmod(kInstallDirectory, 0750) != 0 ||
+      ::chown(kInstalledConfig, 0, service_gid) != 0 ||
+      ::chmod(kInstalledConfig, 0640) != 0) {
+    throw std::runtime_error("cannot set service permissions");
+  }
+  writeFileAtomic(std::string(kInstallDirectory) + "/ros2-udp.xml",
+                  kROS2UDPProfile, 0644);
+  // The group must be able to reuse a lock created by a manual root update.
+  const auto lock_path = std::string(kRuntimeDirectory) + "/.update.lock";
+  const int lock_fd = ::open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, 0660);
+  if (lock_fd < 0) {
+    throw std::runtime_error("cannot create update lock");
+  }
+  const bool lock_permissions = ::fchown(lock_fd, service_uid, service_gid) == 0 &&
+                                ::fchmod(lock_fd, 0660) == 0;
+  ::close(lock_fd);
+  if (!lock_permissions) {
+    throw std::runtime_error("cannot set update lock permissions");
   }
 
-  const auto temporary_binary =
-      std::string(kInstalledBinary) + ".tmp." + std::to_string(::getpid());
-  if (std::filesystem::weakly_canonical(executable_path) !=
-      std::filesystem::weakly_canonical(kInstalledBinary)) {
-    std::filesystem::copy_file(
-        executable_path, temporary_binary,
-        std::filesystem::copy_options::overwrite_existing);
-    ::chmod(temporary_binary.c_str(), 0755);
-    std::filesystem::rename(temporary_binary, kInstalledBinary);
+  for (const auto *destination : {kLauncherBinary, kInstalledBinary}) {
+    if (std::filesystem::weakly_canonical(executable_path) !=
+        std::filesystem::weakly_canonical(destination)) {
+      std::ifstream input(executable_path, std::ios::binary);
+      if (!input) {
+        throw std::runtime_error("cannot read installer binary");
+      }
+      std::ostringstream content;
+      content << input.rdbuf();
+      writeFileAtomic(destination, content.str(), 0755);
+    }
   }
   writeFileAtomic(kUnitPath, serviceUnit(), 0644);
   runCommand({"systemctl", "daemon-reload"});
-  if (!valid_config) {
-    runCommand({"systemctl", "disable", "--now", "batcan.service"}, true);
-    std::cout << "installed batcan.service; select one profile in "
-              << kInstalledConfig << " and start it with: systemctl enable "
-              << "--now batcan\n";
-    return;
-  }
   runCommand({"systemctl", "enable", "batcan.service"});
   runCommand({"systemctl", "restart", "batcan.service"});
   std::cout << "installed and started batcan.service with config "
@@ -502,9 +567,7 @@ void uninstallService(const std::vector<std::string> &arguments) {
   std::filesystem::remove(kUnitPath);
   runCommand({"systemctl", "daemon-reload"});
   runCommand({"systemctl", "reset-failed", "batcan.service"}, true);
-  std::filesystem::remove("/run/lock/batcan-update.lock");
   std::filesystem::remove_all(kLogDirectory);
-  std::filesystem::remove_all(kPrivateLogDirectory);
   std::filesystem::remove_all(kInstallDirectory);
   std::cout << "已彻底卸载 batcan 服务并清理全部程序文件、配置与运行日志。\n";
 }
@@ -556,7 +619,7 @@ void automaticUpdateLoop(std::atomic_bool &stopping,
     lock.unlock();
     try {
       std::cerr << "batcan automatic update check started\n";
-      const auto result = performUpdate();
+      const auto result = performUpdate(true);
       if (result != 0) {
         std::cerr << "batcan automatic update exited with status "
                   << result << '\n';
