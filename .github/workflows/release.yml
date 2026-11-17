@@ -131,6 +131,30 @@ jobs:
           ctest --test-dir build --output-on-failure
           mkdir -p dist
           cp build/batcan dist/batcan-linux-${{ matrix.arch }}
+      - name: Verify ROS package version
+        shell: bash
+        run: |
+          . /opt/ros/humble/setup.bash
+          batcan_install="$RUNNER_TEMP/batcan-install"
+          cmake --install build --prefix "$batcan_install"
+          AMENT_PREFIX_PATH="$batcan_install:${AMENT_PREFIX_PATH:-}" python3 - <<'PYCODE'
+          import os
+          from pathlib import Path
+          import subprocess
+          import xml.etree.ElementTree as ET
+          from ament_index_python.packages import get_package_share_directory
+
+          version = os.environ["VERSION"]
+          share = Path(get_package_share_directory("batcan"))
+          program = subprocess.check_output(["build/batcan", "--version"], text=True).strip()
+          manifest = ET.parse(share / "package.xml").findtext("version")
+          if program != version or manifest != version:
+              raise RuntimeError(f"version mismatch: release={version}, program={program}, ROS={manifest}")
+          check = Path(os.environ["RUNNER_TEMP"], "check-batcan-version.cmake")
+          check.write_text(f"find_package(batcan {version} EXACT REQUIRED CONFIG)\n")
+          subprocess.run(["cmake", f"-Dbatcan_DIR={share / 'cmake'}", "-P", str(check)], check=True)
+          print(f"Program, ROS manifest and CMake package version: {version}")
+          PYCODE
       - uses: actions/upload-artifact@v7
         with:
           name: batcan-${{ matrix.arch }}

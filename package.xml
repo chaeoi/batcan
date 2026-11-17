@@ -1,7 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
   <name>batcan</name>
-  <version>2026.9.11</version>
+  <!-- CMake injects the build version into the installed package manifest. -->
+  <version>0.0.0</version>
   <description>Profile-selected SocketCAN BMS bridge publishing complete decoded data.</description>
   <maintainer email="canghai0823@users.noreply.github.com">canghai0823</maintainer>
   <license>MIT</license>
