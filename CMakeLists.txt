@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(batcan LANGUAGES CXX)
-
-set(BATCAN_VERSION "" CACHE STRING "Release version shown by batcan")
+set(BATCAN_VERSION "" CACHE STRING "Build version for batcan and ROS package metadata")
 if(NOT BATCAN_VERSION)
   execute_process(COMMAND git describe --tags --always --match "[0-9][0-9][0-9][0-9].*.*"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -10,6 +8,13 @@ if(NOT BATCAN_VERSION)
     set(BATCAN_VERSION "dev")
   endif()
 endif()
+
+# ROS manifests need a numeric version; development snapshots use 0.0.0.
+set(BATCAN_PACKAGE_VERSION "0.0.0")
+if(BATCAN_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+$")
+  set(BATCAN_PACKAGE_VERSION "${BATCAN_VERSION}")
+endif()
+project(batcan VERSION "${BATCAN_PACKAGE_VERSION}" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,6 +29,17 @@ find_package(ament_cmake REQUIRED)
 find_package(diagnostic_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(fastrtps REQUIRED)
+
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/package.xml")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/package.xml" BATCAN_PACKAGE_XML)
+string(REGEX REPLACE "<version>[^<]+</version>"
+  "<version>${PROJECT_VERSION}</version>"
+  BATCAN_PACKAGE_XML "${BATCAN_PACKAGE_XML}")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/generated/package.xml"
+  "${BATCAN_PACKAGE_XML}")
+ament_package_xml(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 
 set(BATCAN_MODEL_FILE "${CMAKE_CURRENT_SOURCE_DIR}/models/bms.yml")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -87,3 +103,6 @@ install(TARGETS batcan RUNTIME DESTINATION lib/${PROJECT_NAME})
 install(FILES config.example.yml DESTINATION share/${PROJECT_NAME})
 
 ament_package()
+# ament installs the source placeholder; install the versioned manifest last.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/package.xml"
+  DESTINATION share/${PROJECT_NAME})
