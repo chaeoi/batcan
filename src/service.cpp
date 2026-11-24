@@ -38,8 +38,7 @@ constexpr const char *kInstalledConfig = "/opt/batcan/config.yml";
 constexpr const char *kUnitPath =
     "/etc/systemd/system/batcan.service";
 constexpr const char *kROSSetup = "/opt/ros/humble/setup.bash";
-constexpr auto kInitialUpdateDelay = std::chrono::seconds(30);
-constexpr auto kUpdateInterval = std::chrono::hours(24);
+constexpr auto kInitialUpdateDelay = std::chrono::minutes(2);
 
 std::string trim(const std::string &value) {
   const auto first = value.find_first_not_of(" \t\r\n");
@@ -604,32 +603,24 @@ int serviceCommand(const std::vector<std::string> &arguments,
   throw std::runtime_error("unknown service command: " + arguments.front());
 }
 
-void automaticUpdateLoop(std::atomic_bool &stopping,
-                         std::condition_variable &wake,
-                         std::mutex &wake_mutex) {
+void checkUpdateAfterStartup(std::atomic_bool &stopping,
+                             std::condition_variable &wake,
+                             std::mutex &wake_mutex) {
   std::unique_lock lock(wake_mutex);
   if (wake.wait_for(lock, kInitialUpdateDelay,
                     [&stopping]() { return stopping.load(); })) {
     return;
   }
-  while (!stopping.load()) {
-    lock.unlock();
-    try {
-      std::cerr << "batcan automatic update check started\n";
-      const auto result = performUpdate(true);
-      if (result != 0) {
-        std::cerr << "batcan automatic update exited with status "
-                  << result << '\n';
-      }
-    } catch (const std::exception &error) {
-      std::cerr << "batcan automatic update failed: " << error.what()
-                << '\n';
+  lock.unlock();
+  try {
+    std::cerr << "batcan automatic update check started\n";
+    const auto result = performUpdate(true);
+    if (result != 0) {
+      std::cerr << "batcan automatic update exited with status "
+                << result << '\n';
     }
-    lock.lock();
-    if (wake.wait_for(lock, kUpdateInterval,
-                      [&stopping]() { return stopping.load(); })) {
-      return;
-    }
+  } catch (const std::exception &error) {
+    std::cerr << "batcan automatic update failed: " << error.what() << '\n';
   }
 }
 

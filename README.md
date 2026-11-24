@@ -100,7 +100,7 @@ sudo /opt/batcan/batcan service status
 sudo /opt/batcan/batcan service uninstall
 ```
 
-服务运行期间也会在后台定期（启动 30 秒后及后续每 24 小时）自动检测 GitHub 最新发布，自动验证校验和及当前配置，再原子替换自身并退出，由 systemd 重启。
+每次服务启动约 2 分钟后，程序在后台检查一次 GitHub 最新发布。发现新版时，程序验证校验和及当前配置，再原子替换自身并退出，由 systemd 重启。需要再次检查时可手动执行 `service update`。
 
 
 ## 运行权限与目录
