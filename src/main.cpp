@@ -142,12 +142,15 @@ int main(int argc, char **argv) {
     const bool auto_update = running_binary == installed_binary;
     std::thread update_thread;
     if (auto_update) {
-      update_thread = std::thread(batcan::automaticUpdateLoop,
+      update_thread = std::thread(batcan::checkUpdateAfterStartup,
                                   std::ref(stopping), std::ref(update_wake),
                                   std::ref(update_mutex));
     }
     rclcpp::spin(node);
-    stopping.store(true);
+    {
+      std::lock_guard lock(update_mutex);
+      stopping.store(true);
+    }
     update_wake.notify_one();
     if (update_thread.joinable()) {
       update_thread.join();
